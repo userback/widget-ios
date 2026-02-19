@@ -16,13 +16,6 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-final class PassThroughWebView: WKWebView {
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let view = hitTest(point, with: event)
-        return view != self
-    }
-}
-
 @MainActor
 public final class UserbackSDK: NSObject {
     public static let shared = UserbackSDK()
@@ -130,6 +123,12 @@ public final class UserbackSDK: NSObject {
             return
         }
 
+        guard activeWindow() != nil else {
+            pendingWindowAttachment = true
+            scheduleWindowAttachRetry()
+            return
+        }
+
         let webView = createWebView()
         self.webView = webView
         state = .loading
@@ -177,12 +176,14 @@ public final class UserbackSDK: NSObject {
         webView.frame = CGRect(x: 0, y: 0, width: window.bounds.width, height: window.bounds.height)
         webView.alpha = 1
         webView.isHidden = false
+        webView.isUserInteractionEnabled = true
     }
 
     public func close() {
         guard let webView else { return }
         webView.alpha = 0
         webView.isHidden = true
+        webView.isUserInteractionEnabled = false
         webView.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
     }
 
@@ -207,11 +208,12 @@ public final class UserbackSDK: NSObject {
         controller.addUserScript(script)
         config.userContentController = controller
 
-        let webView = PassThroughWebView(frame: .zero, configuration: config)
+        let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.alpha = 0
         webView.isOpaque = false
         webView.isHidden = true
+        webView.isUserInteractionEnabled = false
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1"
         if #available(iOS 16.4, *) {
             webView.isInspectable = true
@@ -295,7 +297,17 @@ public final class UserbackSDK: NSObject {
     }
 
     private func tryAttachPendingWebView() {
-        guard pendingWindowAttachment, let webView else { return }
+        guard pendingWindowAttachment else { return }
+
+        if webView == nil {
+            guard activeWindow() != nil else { return }
+            let webView = createWebView()
+            self.webView = webView
+            state = .loading
+            startFlushTimerIfNeeded()
+        }
+
+        guard let webView else { return }
         _ = attachToWindow(webView)
     }
 
@@ -452,12 +464,26 @@ extension UserbackSDK: WKNavigationDelegate {
 extension UserbackSDK: WKScriptMessageHandler {
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "userbackSDK" else { return }
-        guard let body = message.body as? [String: Any],
-              let type = body["type"] as? String else { return }
 
-        if type == "close" {
+        if let type = (message.body as? [String: Any])?["type"] as? String,
+           type.caseInsensitiveCompare("close") == .orderedSame {
             close()
+            return
         }
+
+        if let event = (message.body as? [String: Any])?["event"] as? String,
+           event.caseInsensitiveCompare("close") == .orderedSame {
+            close()
+            return
+        }
+
+        if let body = message.body as? String,
+           body.caseInsensitiveCompare("close") == .orderedSame {
+            close()
+            return
+        }
+
+        log("Ignoring unsupported script message body: \(message.body)")
     }
 }
 

@@ -18,7 +18,7 @@ struct UserbackSDKExampleApp: App {
             surveyURL: "https://app.dev.userback.net/s",
             requestURL: "https://api.dev.userback.net/",
             trackURL: "https://events.dev.userback.net",
-            widgetJSURL: "https://app.dev.userback.net/dist/widget_dev/widget.min.js?34"
+            widgetJSURL: "https://app.dev.userback.net/dist/widget_dev/widget.min.js"
         )
     }
 
