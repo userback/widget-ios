@@ -3,6 +3,6 @@ import XCTest
 
 final class UserbackSDKTests: XCTestCase {
     func testVersion() {
-        XCTAssertEqual(UserbackSDK.version(), "0.1.0")
+        XCTAssertEqual(UserbackSDK.version(), "1.0.0")
     }
 }

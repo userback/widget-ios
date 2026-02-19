@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		4BB55AC32F46796E00214921 /* UserbackSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 4BB55AC22F46796E00214921 /* UserbackSDK */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		4BB55A742F442FE800214921 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4BB55AC32F46796E00214921 /* UserbackSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = UserbackSDKExample;
 			packageProductDependencies = (
+				4BB55AC22F46796E00214921 /* UserbackSDK */,
 			);
 			productName = UserbackSDKExample;
 			productReference = 4BB55A632F442FE600214921 /* UserbackSDKExample.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 4BB55A5A2F442FE600214921;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4BB55AC12F46796E00214921 /* XCLocalSwiftPackageReference "../../../widget-ios" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 4BB55A642F442FE600214921 /* Products */;
 			projectDirPath = "";
@@ -558,6 +567,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4BB55AC12F46796E00214921 /* XCLocalSwiftPackageReference "../../../widget-ios" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../../widget-ios";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4BB55AC22F46796E00214921 /* UserbackSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = UserbackSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 4BB55A5B2F442FE600214921 /* Project object */;
 }
