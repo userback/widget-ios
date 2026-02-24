@@ -8,37 +8,52 @@
 import SwiftUI
 import UserbackSDK
 
-private struct DevEndpoints {
-    let widgetCSS = "https://app.userback.ngrok.app/dist/widget_dev/widget.min.css"
-    let surveyURL = "https://app.userback.ngrok.app/s"
-    let requestURL = "https://api.userback.ngrok.app/"
-    let trackURL = "https://events.userback.ngrok.app"
-    let widgetJSURL = "https://app.userback.ngrok.app/dist/widget_dev/widget.min.js"
+private struct UserbackAppConfig {
+    let accessToken: String
+    let widgetCSS: String
+    let surveyURL: String
+    let requestURL: String
+    let trackURL: String
+    let widgetJSURL: String
+
+    init(bundle: Bundle = .main) {
+        accessToken = Self.readString("USERBACK_ACCESS_TOKEN", from: bundle)
+        widgetCSS = Self.readString("USERBACK_WIDGET_CSS_URL", from: bundle)
+        surveyURL = Self.readString("USERBACK_SURVEY_URL", from: bundle)
+        requestURL = Self.readString("USERBACK_REQUEST_URL", from: bundle)
+        trackURL = Self.readString("USERBACK_TRACK_URL", from: bundle)
+        widgetJSURL = Self.readString("USERBACK_WIDGET_JS_URL", from: bundle)
+    }
 
     var allURLs: [String] {
         [widgetCSS, surveyURL, requestURL, trackURL, widgetJSURL]
+    }
+
+    private static func readString(_ key: String, from bundle: Bundle) -> String {
+        (bundle.object(forInfoDictionaryKey: key) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }
 
 @main
 struct UserbackSDKExampleApp: App {
     init() {
-        let endpoints = DevEndpoints()
+        let config = UserbackAppConfig()
 
         #if DEBUG
-        endpoints.allURLs.forEach { urlString in
+        assert(!config.accessToken.isEmpty, "Missing Info.plist key: USERBACK_ACCESS_TOKEN")
+        config.allURLs.forEach { urlString in
             assert(URL(string: urlString) != nil, "Invalid dev endpoint URL: \(urlString)")
         }
         #endif
 
         UserbackSDK.shared.start(
-            accessToken: "USERBACK_ACCESS_TOKEN",
+            accessToken: config.accessToken,
             userData: ["id": "example-user-id", "info": ["name": "Example User"]],
-            widgetCSS: endpoints.widgetCSS,
-            surveyURL: endpoints.surveyURL,
-            requestURL: endpoints.requestURL,
-            trackURL: endpoints.trackURL,
-            widgetJSURL: endpoints.widgetJSURL
+            widgetCSS: config.widgetCSS,
+            surveyURL: config.surveyURL,
+            requestURL: config.requestURL,
+            trackURL: config.trackURL,
+            widgetJSURL: config.widgetJSURL
         )
     }
 
