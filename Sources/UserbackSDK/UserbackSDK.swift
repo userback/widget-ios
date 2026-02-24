@@ -60,6 +60,7 @@ public final class UserbackSDK: NSObject {
     private let defaultWidgetJSURL = "https://static.userback.io/widget/v1.js"
     private let flushInterval: TimeInterval = 1.0
     private let bufferLimit = 50
+    private let overlayAnimationDuration: TimeInterval = 0.25
 
     private var configuration: Configuration?
     private var state: State = .idle
@@ -199,19 +200,41 @@ public final class UserbackSDK: NSObject {
         }
         containerView.bringSubviewToFront(webView)
         webView.frame = containerView.bounds
-        webView.alpha = 1
         webView.isHidden = false
-        webView.isUserInteractionEnabled = true
+        webView.alpha = 1
+        webView.isUserInteractionEnabled = false
+        webView.transform = CGAffineTransform(translationX: 0, y: containerView.bounds.height)
+
+        UIView.animate(
+            withDuration: overlayAnimationDuration,
+            delay: 0,
+            options: [.curveEaseOut, .beginFromCurrentState]
+        ) {
+            webView.transform = .identity
+        } completion: { _ in
+            webView.isUserInteractionEnabled = true
+        }
     }
 
     public func close() {
         guard let webView else { return }
         evaluateJavaScript("window.Userback && window.Userback.close && window.Userback.close();")
-        webView.alpha = 0
-        webView.isHidden = true
         webView.isUserInteractionEnabled = false
-        webView.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
-        webView.removeFromSuperview()
+
+        let slideDistance = webView.superview?.bounds.height ?? webView.bounds.height
+        UIView.animate(
+            withDuration: overlayAnimationDuration,
+            delay: 0,
+            options: [.curveEaseIn, .beginFromCurrentState]
+        ) {
+            webView.transform = CGAffineTransform(translationX: 0, y: slideDistance)
+            webView.alpha = 0
+        } completion: { _ in
+            webView.isHidden = true
+            webView.transform = .identity
+            webView.alpha = 0
+            webView.removeFromSuperview()
+        }
     }
 
     private func createWebView() -> WKWebView {
