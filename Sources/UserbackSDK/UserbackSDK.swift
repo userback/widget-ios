@@ -168,12 +168,32 @@ public final class UserbackSDK: NSObject {
     }
 
     public func open(mode: String = "default") {
-        guard webView != nil else { return }
-        let escapedMode = jsQuotedString(mode)
-        evaluateJavaScript("window.Userback && Userback.open(\(escapedMode));")
+        if webView == nil {
+            guard activeWindow() != nil else {
+                pendingWindowAttachment = true
+                scheduleWindowAttachRetry()
+                return
+            }
+
+            let createdWebView = createWebView()
+            self.webView = createdWebView
+            state = .loading
+            startFlushTimerIfNeeded()
+
+            if !attachToWindow(createdWebView) {
+                scheduleWindowAttachRetry()
+                return
+            }
+        }
+
+        if shouldLoadAsWidgetScript(configuration?.widgetJSURL) {
+            let escapedMode = jsQuotedString(mode)
+            evaluateJavaScript("window.Userback && Userback.open(\(escapedMode));")
+        }
 
         guard let webView, let window = activeWindow() else { return }
-        webView.frame = CGRect(x: 0, y: 0, width: window.bounds.width, height: window.bounds.height)
+        let containerView = presentationContainerView(for: window)
+        webView.frame = containerView.bounds
         webView.alpha = 1
         webView.isHidden = false
         webView.isUserInteractionEnabled = true
@@ -226,27 +246,40 @@ public final class UserbackSDK: NSObject {
         guard let window = activeWindow() else {
             return false
         }
+        let containerView = presentationContainerView(for: window)
 
-        let html = """
-        <html>
-          <head>
-            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">
-          </head>
-          <body>
-            <script src=\"\(configuration?.widgetJSURL ?? defaultWidgetJSURL)\"></script>
-          </body>
-        </html>
-        """
-
-        webView.loadHTMLString(html, baseURL: URL(string: "https://static.userback.io"))
-        if webView.superview !== window {
-            webView.removeFromSuperview()
-            window.addSubview(webView)
+        let configuredURLString = configuration?.widgetJSURL ?? defaultWidgetJSURL
+        if shouldLoadAsWidgetScript(configuredURLString) {
+                let html = """
+                <html>
+                    <head>
+                        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">
+                    </head>
+                    <body>
+                        <script src=\"\(configuredURLString)\"></script>
+                    </body>
+                </html>
+                """
+                webView.loadHTMLString(html, baseURL: URL(string: "https://static.userback.io"))
+        } else if let url = URL(string: configuredURLString) {
+                webView.load(URLRequest(url: url))
         }
-        window.bringSubviewToFront(webView)
+
+        if webView.superview !== containerView {
+            webView.removeFromSuperview()
+            containerView.addSubview(webView)
+        }
+        containerView.bringSubviewToFront(webView)
         pendingWindowAttachment = false
         removeActivationObservers()
         return true
+    }
+
+    private func presentationContainerView(for window: UIWindow) -> UIView {
+        if let rootView = window.rootViewController?.view {
+            return rootView
+        }
+        return window
     }
 
     private func reloadWidget() {
@@ -264,6 +297,16 @@ public final class UserbackSDK: NSObject {
             scheduleWindowAttachRetry()
         }
         state = .loading
+    }
+
+    private func shouldLoadAsWidgetScript(_ urlString: String?) -> Bool {
+        guard let urlString,
+              let url = URL(string: urlString),
+              !url.path.isEmpty else {
+            return true
+        }
+
+        return url.path.lowercased().hasSuffix(".js")
     }
 
     private func scheduleWindowAttachRetry() {
