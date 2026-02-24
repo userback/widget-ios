@@ -193,6 +193,11 @@ public final class UserbackSDK: NSObject {
 
         guard let webView, let window = activeWindow() else { return }
         let containerView = presentationContainerView(for: window)
+        if webView.superview !== containerView {
+            webView.removeFromSuperview()
+            containerView.addSubview(webView)
+        }
+        containerView.bringSubviewToFront(webView)
         webView.frame = containerView.bounds
         webView.alpha = 1
         webView.isHidden = false
@@ -201,10 +206,12 @@ public final class UserbackSDK: NSObject {
 
     public func close() {
         guard let webView else { return }
+        evaluateJavaScript("window.Userback && window.Userback.close && window.Userback.close();")
         webView.alpha = 0
         webView.isHidden = true
         webView.isUserInteractionEnabled = false
         webView.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        webView.removeFromSuperview()
     }
 
     private func createWebView() -> WKWebView {
@@ -419,7 +426,7 @@ public final class UserbackSDK: NSObject {
 
         return """
         window.Userback = window.Userback || {};
-        Userback.is_mobile_sdk = true;
+        Userback.load_type = "mobile_sdk";
         Userback.access_token = \(jsonLiteral(configuration?.accessToken));
         Userback.user_data = \(jsonLiteral(configuration?.userData));
         Userback.widget_css = \(jsonLiteral(configuration?.widgetCSS));
