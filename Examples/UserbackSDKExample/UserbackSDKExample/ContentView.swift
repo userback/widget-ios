@@ -102,7 +102,7 @@ private struct ShopScreen: View {
                     .font(.largeTitle)
 
                 Button("Checkout Feedback") {
-                    UserbackSDK.shared.open(mode: "checkout")
+                    UserbackSDK.shared.openForm(mode: "checkout")
                 }
                 .buttonStyle(.bordered)
 
@@ -142,27 +142,181 @@ private struct ProfileScreen: View {
 
                 Section("Support") {
                     Button {
-                        UserbackSDK.shared.open(mode: "general")
+                        UserbackSDK.shared.openForm(mode: "general")
                     } label: {
                         Label("Send Feedback", systemImage: "bubble.left.and.bubble.right")
                     }
 
                     Button {
-                        UserbackSDK.shared.open(mode: "bug")
+                        UserbackSDK.shared.openForm(mode: "bug")
                     } label: {
                         Label("Report a Bug", systemImage: "ant")
                     }
 
                     Button {
-                        UserbackSDK.shared.open(mode: "feature")
+                        UserbackSDK.shared.openForm(mode: "feature")
                     } label: {
                         Label("Request a Feature", systemImage: "lightbulb")
+                    }
+                }
+
+                Section("SDK Endpoint Tests") {
+                    NavigationLink {
+                        EndpointTestScreen()
+                    } label: {
+                        Label("Open Endpoint Tester", systemImage: "hammer")
                     }
                 }
             }
             .navigationTitle("Profile")
             .listStyle(.insetGrouped)
         }
+    }
+}
+
+private struct EndpointTestScreen: View {
+    @State private var endpointStatus = "Not tested"
+
+    var body: some View {
+        Form {
+            Section("Status") {
+                Text(endpointStatus)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Lifecycle") {
+                Button("Check isLoaded") {
+                    UserbackSDK.shared.isLoaded { loaded in
+                        endpointStatus = "isLoaded: \(loaded)"
+                    }
+                }
+
+                Button("Init Widget") {
+                    UserbackSDK.shared.initWidget()
+                    endpointStatus = "Called initWidget()"
+                }
+
+                Button("Start Widget") {
+                    UserbackSDK.shared.startWidget()
+                    endpointStatus = "Called startWidget()"
+                }
+
+                Button("Refresh") {
+                    UserbackSDK.shared.refresh(refreshFeedback: true, refreshSurvey: true)
+                    endpointStatus = "Called refresh()"
+                }
+
+                Button("Destroy (keep instance + recorder)") {
+                    UserbackSDK.shared.destroy(keepInstance: false, keepRecorder: false)
+                    endpointStatus = "Called destroy(keepInstance: false, keepRecorder: false)"
+                }
+            }
+
+            Section("Open / Close") {
+                Button("Open Form (general)") {
+                    UserbackSDK.shared.openForm(mode: "general")
+                    endpointStatus = "Called openForm(general)"
+                }
+
+                Button("Open Portal") {
+                    UserbackSDK.shared.openPortal()
+                    endpointStatus = "Called openPortal()"
+                }
+
+                Button("Open Roadmap") {
+                    UserbackSDK.shared.openRoadmap()
+                    endpointStatus = "Called openRoadmap()"
+                }
+
+                Button("Open Announcement") {
+                    UserbackSDK.shared.openAnnouncement()
+                    endpointStatus = "Called openAnnouncement()"
+                }
+
+                Button("Close Widget") {
+                    UserbackSDK.shared.close()
+                    endpointStatus = "Called close()"
+                }
+            }
+
+            Section("Identity & Data") {
+                Button("Identify User") {
+                    UserbackSDK.shared.identify(
+                        userID: "ios-sample-user-001",
+                        userInfo: ["email": "demo.user@example.com", "plan": "pro"]
+                    )
+                    endpointStatus = "Called identify()"
+                }
+
+                Button("Clear Identity") {
+                    UserbackSDK.shared.clearIdentity()
+                    endpointStatus = "Called clearIdentity()"
+                }
+
+                Button("Set Data") {
+                    UserbackSDK.shared.setData([
+                        "build": "ios-debug",
+                        "is_test": true,
+                        "screen": "profile"
+                    ])
+                    endpointStatus = "Called setData()"
+                }
+
+                Button("Add Header") {
+                    UserbackSDK.shared.addHeader(key: "X-Debug-Source", value: "ios-sample")
+                    endpointStatus = "Called addHeader()"
+                }
+            }
+
+            Section("Field Setters") {
+                Button("Set Email") {
+                    UserbackSDK.shared.setEmail("demo.user@example.com")
+                    endpointStatus = "Called setEmail()"
+                }
+
+                Button("Set Name") {
+                    UserbackSDK.shared.setName("Demo User")
+                    endpointStatus = "Called setName()"
+                }
+
+                Button("Set Categories") {
+                    UserbackSDK.shared.setCategories("ios,dev")
+                    endpointStatus = "Called setCategories()"
+                }
+
+                Button("Set Priority") {
+                    UserbackSDK.shared.setPriority("high")
+                    endpointStatus = "Called setPriority()"
+                }
+
+                Button("Set Theme (dark)") {
+                    UserbackSDK.shared.setTheme("dark")
+                    endpointStatus = "Called setTheme(dark)"
+                }
+            }
+
+            Section("Session Replay & Events") {
+                Button("Start Session Replay") {
+                    UserbackSDK.shared.startSessionReplay(options: [
+                        "tags": ["ios", "sample"],
+                        "mask_rules": ["input[type=password]"]
+                    ])
+                    endpointStatus = "Called startSessionReplay()"
+                }
+
+                Button("Stop Session Replay") {
+                    UserbackSDK.shared.stopSessionReplay()
+                    endpointStatus = "Called stopSessionReplay()"
+                }
+
+                Button("Add Custom Event") {
+                    UserbackSDK.shared.addCustomEvent("ios_test_event", details: ["source": "endpoint_tester"])
+                    endpointStatus = "Called addCustomEvent()"
+                }
+            }
+        }
+        .navigationTitle("Endpoint Tester")
     }
 }
 

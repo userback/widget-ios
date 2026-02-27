@@ -60,7 +60,6 @@ public final class UserbackSDK: NSObject {
     private let defaultWidgetJSURL = "https://static.userback.io/widget/v1.js"
     private let flushInterval: TimeInterval = 1.0
     private let bufferLimit = 50
-    private let overlayAnimationDuration: TimeInterval = 0.25
 
     private var configuration: Configuration?
     private var state: State = .idle
@@ -70,6 +69,9 @@ public final class UserbackSDK: NSObject {
     private var messageHandlerProxy: WeakScriptMessageHandler?
     private var activationObservers: [NSObjectProtocol] = []
     private var pendingWindowAttachment = false
+    private var latestWidgetConfig: [String: Any]?
+
+    public var onWidgetConfigLoaded: (([String: Any]) -> Void)?
 
     private override init() {
         super.init()
@@ -148,7 +150,32 @@ public final class UserbackSDK: NSObject {
         webView?.removeFromSuperview()
         webView = nil
         pendingWindowAttachment = false
+        latestWidgetConfig = nil
         removeActivationObservers()
+    }
+
+    public func widgetConfig() -> [String: Any]? {
+        latestWidgetConfig
+    }
+
+    public func widgetConfigValue<T>(forKey key: String) -> T? {
+        latestWidgetConfig?[key] as? T
+    }
+
+    public func portalTarget() -> String? {
+        latestWidgetConfig?["portal_target"] as? String
+    }
+
+    public func roadmapTarget() -> String? {
+        return latestWidgetConfig?["roadmap_target"] as? String
+    }
+
+    public func portalURL() -> URL? {
+        guard let raw = latestWidgetConfig?["portal_url"] as? String,
+              !raw.isEmpty else {
+            return nil
+        }
+        return URL(string: raw)
     }
 
     public func startNativeRecording() {
@@ -168,7 +195,32 @@ public final class UserbackSDK: NSObject {
         flushBufferedEvents()
     }
 
-    public func open(mode: String = "default") {
+    public func isLoaded(completion: @escaping (Bool) -> Void) {
+        evaluateJavaScript("window.Userback && typeof window.Userback.isLoaded === 'function' ? !!window.Userback.isLoaded() : false") { result, _ in
+            completion(result as? Bool ?? false)
+        }
+    }
+
+    public func initWidget(options: [String: Any] = [:]) {
+        guard let config = configuration else { return }
+        let token = jsValueLiteral(config.accessToken)
+        let optionsLiteral = jsValueLiteral(options)
+        evaluateJavaScript("window.Userback && typeof window.Userback.init === 'function' && window.Userback.init(\(token), \(optionsLiteral));")
+    }
+
+    public func startWidget() {
+        callUserback(function: "start")
+    }
+
+    public func refresh(refreshFeedback: Bool = true, refreshSurvey: Bool = true) {
+        callUserback(function: "refresh", arguments: [refreshFeedback, refreshSurvey])
+    }
+
+    public func destroy(keepInstance: Bool = false, keepRecorder: Bool = false) {
+        callUserback(function: "destroy", arguments: [keepInstance, keepRecorder])
+    }
+
+    public func openForm(mode: String = "general", directTo: String? = nil) {
         if webView == nil {
             guard activeWindow() != nil else {
                 pendingWindowAttachment = true
@@ -188,8 +240,7 @@ public final class UserbackSDK: NSObject {
         }
 
         if shouldLoadAsWidgetScript(configuration?.widgetJSURL) {
-            let escapedMode = jsQuotedString(mode)
-            evaluateJavaScript("window.Userback && Userback.open(\(escapedMode));")
+            callUserback(function: "openForm", arguments: [mode, directTo])
         }
 
         guard let webView, let window = activeWindow() else { return }
@@ -202,39 +253,120 @@ public final class UserbackSDK: NSObject {
         webView.frame = containerView.bounds
         webView.isHidden = false
         webView.alpha = 1
-        webView.isUserInteractionEnabled = false
-        webView.transform = CGAffineTransform(translationX: 0, y: containerView.bounds.height)
+        webView.transform = .identity
+        webView.isUserInteractionEnabled = true
+    }
 
-        UIView.animate(
-            withDuration: overlayAnimationDuration,
-            delay: 0,
-            options: [.curveEaseOut, .beginFromCurrentState]
-        ) {
-            webView.transform = .identity
-        } completion: { _ in
-            webView.isUserInteractionEnabled = true
+    public func openPortal() {
+        switch portalTarget()?.lowercased() {
+            case "widget":
+                callUserback(function: "openPortal", arguments: ["portal"])
+            case "redirect", "window":
+                if let url = portalURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openPortal")
+            default:
+                callUserback(function: "openPortal")
         }
+    }
+
+    public func openRoadmap() {
+        switch roadmapTarget()?.lowercased() {
+            case "widget":
+                callUserback(function: "openPortal", arguments: ["roadmap"])
+            case "redirect", "window":
+                if let url = portalURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openRoadmap")
+            default:
+                callUserback(function: "openRoadmap")
+        }
+    }
+
+    public func openAnnouncement() {
+        switch (latestWidgetConfig?["announcement_target"] as? String)?.lowercased() {
+            case "widget":
+                callUserback(function: "openPortal", arguments: ["announcement"])
+            case "redirect", "window":
+                if let url = portalURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openAnnouncement")
+            default:
+                callUserback(function: "openAnnouncement")
+        }
+    }
+
+    // Disable showLauncher and hideLauncher for now as they require more discussion on expected behavior and API design
+    // public func showLauncher() {
+    //     // TODO: need discuss
+    // }
+
+    // public func hideLauncher() {
+    //     // TODO: need discuss
+    // }
+
+    public func setEmail(_ email: String) {
+        callUserback(function: "setEmail", arguments: [email])
+    }
+
+    public func setName(_ name: String) {
+        callUserback(function: "setName", arguments: [name])
+    }
+
+    public func setCategories(_ categories: String) {
+        callUserback(function: "setCategories", arguments: [categories])
+    }
+
+    public func setPriority(_ priority: String) {
+        callUserback(function: "setPriority", arguments: [priority])
+    }
+
+    public func setTheme(_ theme: String) {
+        callUserback(function: "setTheme", arguments: [theme])
+    }
+
+    public func startSessionReplay(options: [String: Any] = [:]) {
+        callUserback(function: "startSessionReplay", arguments: [options])
+    }
+
+    public func stopSessionReplay() {
+        callUserback(function: "stopSessionReplay")
+    }
+
+    public func addCustomEvent(_ title: String, details: [String: Any]? = nil) {
+        callUserback(function: "addCustomEvent", arguments: [title, details])
+    }
+
+    public func identify(userID: Any, userInfo: [String: Any]? = nil) {
+        callUserback(function: "identify", arguments: [userID, userInfo])
+    }
+
+    public func clearIdentity() {
+        callUserback(function: "identify", arguments: [-1])
+    }
+
+    public func setData(_ data: [String: Any]) {
+        callUserback(function: "setData", arguments: [data])
+    }
+
+    public func addHeader(key: String, value: String) {
+        callUserback(function: "addHeader", arguments: [key, value])
     }
 
     public func close() {
         guard let webView else { return }
         evaluateJavaScript("window.Userback && window.Userback.close && window.Userback.close();")
         webView.isUserInteractionEnabled = false
-
-        let slideDistance = webView.superview?.bounds.height ?? webView.bounds.height
-        UIView.animate(
-            withDuration: overlayAnimationDuration,
-            delay: 0,
-            options: [.curveEaseIn, .beginFromCurrentState]
-        ) {
-            webView.transform = CGAffineTransform(translationX: 0, y: slideDistance)
-            webView.alpha = 0
-        } completion: { _ in
-            webView.isHidden = true
-            webView.transform = .identity
-            webView.alpha = 0
-            webView.removeFromSuperview()
-        }
+        webView.isHidden = true
+        webView.transform = .identity
+        webView.alpha = 0
+        webView.removeFromSuperview()
     }
 
     private func createWebView() -> WKWebView {
@@ -495,10 +627,57 @@ public final class UserbackSDK: NSObject {
         return String(jsonArray.dropFirst().dropLast())
     }
 
-    private func evaluateJavaScript(_ script: String) {
-        webView?.evaluateJavaScript(script) { [weak self] _, error in
-            guard let self, let error else { return }
-            self.log("JavaScript evaluation error: \(error.localizedDescription)")
+    private func jsValueLiteral(_ value: Any?) -> String {
+        guard let value else { return "null" }
+
+        if let string = value as? String {
+            return jsQuotedString(string)
+        }
+
+        if let bool = value as? Bool {
+            return bool ? "true" : "false"
+        }
+
+        if let int = value as? Int {
+            return String(int)
+        }
+
+        if let double = value as? Double {
+            return String(double)
+        }
+
+        if let float = value as? Float {
+            return String(float)
+        }
+
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
+
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return "null"
+        }
+
+        return json
+    }
+
+    private func callUserback(function: String, arguments: [Any?] = []) {
+        let args = arguments.map { jsValueLiteral($0) }.joined(separator: ", ")
+        evaluateJavaScript("window.Userback && typeof window.Userback.\(function) === 'function' && window.Userback.\(function)(\(args));")
+    }
+
+    private func openURL(_ url: URL) {
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    private func evaluateJavaScript(_ script: String, completion: ((Any?, Error?) -> Void)? = nil) {
+        webView?.evaluateJavaScript(script) { [weak self] result, error in
+            if let error {
+                self?.log("JavaScript evaluation error: \(error.localizedDescription)")
+            }
+            completion?(result, error)
         }
     }
 
@@ -538,25 +717,51 @@ extension UserbackSDK: WKScriptMessageHandler {
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "userbackSDK" else { return }
 
-        if let type = (message.body as? [String: Any])?["type"] as? String,
-           type.caseInsensitiveCompare("close") == .orderedSame {
-            close()
+        guard let body = parseMessageBody(message.body),
+              let type = body["type"] as? String else {
+            if let body = message.body as? String,
+               body.caseInsensitiveCompare("close") == .orderedSame {
+                close()
+                return
+            }
+            log("Ignoring unsupported script message body: \(message.body)")
             return
         }
 
-        if let event = (message.body as? [String: Any])?["event"] as? String,
+        switch type.lowercased() {
+            case "load":
+                guard let payload = body["payload"] as? [String: Any] else {
+                    log("Received 'load' message without config payload.")
+                    return
+                }
+                latestWidgetConfig = payload
+                onWidgetConfigLoaded?(payload)
+            case "close":
+                close()
+            default:
+                break
+        }
+
+        if let event = body["event"] as? String,
            event.caseInsensitiveCompare("close") == .orderedSame {
             close()
             return
         }
+    }
 
-        if let body = message.body as? String,
-           body.caseInsensitiveCompare("close") == .orderedSame {
-            close()
-            return
+    private func parseMessageBody(_ rawBody: Any) -> [String: Any]? {
+        if let body = rawBody as? [String: Any] {
+            return body
         }
 
-        log("Ignoring unsupported script message body: \(message.body)")
+        if let jsonString = rawBody as? String,
+           let data = jsonString.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data, options: []),
+           let body = object as? [String: Any] {
+            return body
+        }
+
+        return nil
     }
 }
 
