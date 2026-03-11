@@ -431,6 +431,7 @@ public final class UserbackSDK: NSObject {
             webView.removeFromSuperview()
             containerView.addSubview(webView)
         }
+
         containerView.bringSubviewToFront(webView)
         pendingWindowAttachment = false
         removeActivationObservers()
@@ -736,6 +737,8 @@ extension UserbackSDK: WKScriptMessageHandler {
                 }
                 latestWidgetConfig = payload
                 onWidgetConfigLoaded?(payload)
+            case "widget_action":
+                handleWidgetAction(body)
             case "close":
                 close()
             default:
@@ -747,6 +750,110 @@ extension UserbackSDK: WKScriptMessageHandler {
             close()
             return
         }
+    }
+
+    private func handleWidgetAction(_ body: [String: Any]) {
+        guard let payload = body["payload"] as? [String: Any],
+              let action = payload["action"] as? String else {
+            log("Received 'widget_action' message without valid payload/action.")
+            return
+        }
+
+        let target = (payload["target"] as? String)?.lowercased()
+
+        switch action.lowercased() {
+            case "gotoportal":
+                openPortal(forcedTarget: target)
+            case "openhelp":
+                openHelp(forcedTarget: target)
+            case "gotoannouncement":
+                openAnnouncement(forcedTarget: target)
+            case "gotoroadmap":
+                openRoadmap(forcedTarget: target)
+            default:
+                log("Ignoring unsupported widget action: \(action)")
+        }
+    }
+
+    private func openPortal(forcedTarget target: String?) {
+        guard let target else {
+            openPortal()
+            return
+        }
+
+        switch target {
+            case "widget":
+                callUserback(function: "openPortal", arguments: ["portal"])
+            case "redirect", "window":
+                if let url = portalURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openPortal")
+            default:
+                openPortal()
+        }
+    }
+
+    private func openRoadmap(forcedTarget target: String?) {
+        guard let target else {
+            openRoadmap()
+            return
+        }
+
+        switch target {
+            case "widget":
+                callUserback(function: "openPortal", arguments: ["roadmap"])
+            case "redirect", "window":
+                if let url = portalURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openRoadmap")
+            default:
+                openRoadmap()
+        }
+    }
+
+    private func openAnnouncement(forcedTarget target: String?) {
+        guard let target else {
+            openAnnouncement()
+            return
+        }
+
+        switch target {
+            case "widget":
+                callUserback(function: "openPortal", arguments: ["announcement"])
+            case "redirect", "window":
+                if let url = portalURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openAnnouncement")
+            default:
+                openAnnouncement()
+        }
+    }
+
+    private func openHelp(forcedTarget target: String?) {
+        switch target {
+            case "redirect", "window":
+                if let url = helpURL() {
+                    openURL(url)
+                    return
+                }
+                callUserback(function: "openHelp")
+            default:
+                callUserback(function: "openHelp")
+        }
+    }
+
+    private func helpURL() -> URL? {
+        guard let raw = latestWidgetConfig?["help_url"] as? String,
+              !raw.isEmpty else {
+            return portalURL()
+        }
+        return URL(string: raw)
     }
 
     private func parseMessageBody(_ rawBody: Any) -> [String: Any]? {
