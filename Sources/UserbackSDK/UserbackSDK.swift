@@ -244,13 +244,17 @@ public final class UserbackSDK: NSObject {
         }
 
         guard let webView, let window = activeWindow() else { return }
-        let containerView = presentationContainerView(for: window)
-        if webView.superview !== containerView {
-            webView.removeFromSuperview()
-            containerView.addSubview(webView)
+
+        // Keep the current host stable while the widget is open. Re-parenting during
+        // transient WebKit presentations (e.g. select/context UI) causes visible jumps.
+        if webView.superview == nil || webView.window !== window {
+            if !attachToWindow(webView) {
+                scheduleWindowAttachRetry()
+                return
+            }
         }
-        containerView.bringSubviewToFront(webView)
-        webView.frame = containerView.bounds
+
+        webView.superview?.bringSubviewToFront(webView)
         webView.isHidden = false
         webView.alpha = 1
         webView.transform = .identity
@@ -392,10 +396,17 @@ public final class UserbackSDK: NSObject {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+        webView.layer.borderColor = UIColor.red.cgColor
+        webView.layer.borderWidth = 2
         webView.alpha = 0
         webView.isOpaque = false
         webView.isHidden = true
         webView.isUserInteractionEnabled = false
+        // Prevent any automatic content inset adjustments to avoid layout issues with the widget.
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+        webView.scrollView.contentInset = .zero
+        webView.scrollView.scrollIndicatorInsets = .zero
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1"
         if #available(iOS 16.4, *) {
             webView.isInspectable = true
@@ -415,7 +426,16 @@ public final class UserbackSDK: NSObject {
                 let html = """
                 <html>
                     <head>
-                        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">
+                        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover\">
+                        <style>
+                            html, body {
+                                margin: 0;
+                                padding: 0;
+                                width: 100%;
+                                height: 100%;
+                                background: transparent;
+                            }
+                        </style>
                     </head>
                     <body>
                         <script src=\"\(configuredURLString)\"></script>
@@ -428,8 +448,9 @@ public final class UserbackSDK: NSObject {
         }
 
         if webView.superview !== containerView {
-            webView.removeFromSuperview()
-            containerView.addSubview(webView)
+            pinWebViewToContainer(webView, containerView: containerView)
+        } else if webView.translatesAutoresizingMaskIntoConstraints {
+            pinWebViewToContainer(webView, containerView: containerView)
         }
 
         containerView.bringSubviewToFront(webView)
@@ -439,10 +460,56 @@ public final class UserbackSDK: NSObject {
     }
 
     private func presentationContainerView(for window: UIWindow) -> UIView {
-        if let rootView = window.rootViewController?.view {
-            return rootView
+        if let presentingViewController = presentingViewController(for: window) {
+            return presentingViewController.view
         }
         return window
+    }
+
+    private func presentingViewController(for window: UIWindow) -> UIViewController? {
+        if let root = window.rootViewController {
+            return topMostViewController(from: root)
+        }
+        return nil
+    }
+
+    private func topMostViewController(from root: UIViewController) -> UIViewController {
+        var current = root
+
+        while true {
+            if let presented = current.presentedViewController {
+                current = presented
+                continue
+            }
+
+            if let nav = current as? UINavigationController,
+               let visible = nav.visibleViewController {
+                current = visible
+                continue
+            }
+
+            if let tab = current as? UITabBarController,
+               let selected = tab.selectedViewController {
+                current = selected
+                continue
+            }
+
+            break
+        }
+
+        return current
+    }
+
+    private func pinWebViewToContainer(_ webView: WKWebView, containerView: UIView) {
+        webView.removeFromSuperview()
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+        ])
     }
 
     private func reloadWidget() {
@@ -770,6 +837,8 @@ extension UserbackSDK: WKScriptMessageHandler {
                 openAnnouncement(forcedTarget: target)
             case "gotoroadmap":
                 openRoadmap(forcedTarget: target)
+            case "attachscreenshot":
+                attachScreenshotAndSendToJS()
             default:
                 log("Ignoring unsupported widget action: \(action)")
         }
@@ -854,6 +923,61 @@ extension UserbackSDK: WKScriptMessageHandler {
             return portalURL()
         }
         return URL(string: raw)
+    }
+
+    private func attachScreenshotAndSendToJS() {
+        guard let screenshotDataURL = captureActiveWindowScreenshotDataURL() else {
+            log("Failed to capture screenshot for attachScreenshot action.")
+            return
+        }
+
+        sendScreenshotToJavaScript(screenshotDataURL)
+    }
+
+    private func captureActiveWindowScreenshotDataURL() -> String? {
+        guard let window = activeWindow() else { return nil }
+
+        let rendererFormat = UIGraphicsImageRendererFormat.default()
+        rendererFormat.scale = UIScreen.main.scale
+
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: rendererFormat)
+        let screenshot = renderer.image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+
+        guard let data = screenshot.jpegData(compressionQuality: 0.8) else {
+            return nil
+        }
+
+        return "data:image/jpeg;base64,\(data.base64EncodedString())"
+    }
+
+    private func sendScreenshotToJavaScript(_ dataURL: String) {
+        let jsDataURL = jsQuotedString(dataURL)
+
+        let script = """
+        (function() {
+            var dataURL = \(jsDataURL);
+
+            var message = {
+                type: 'native_screenshot',
+                payload: {
+                    data_url: dataURL
+                }
+            };
+
+            window.dispatchEvent(new CustomEvent('userback:nativeScreenshot', { detail: message }));
+            return;
+        })();
+        """
+
+        evaluateJavaScript(script) { [weak self] result, _ in
+            guard let route = result as? String else {
+                self?.log("Screenshot captured but JS delivery route was not confirmed.")
+                return
+            }
+            self?.log("Screenshot delivered to JS via: \(route)")
+        }
     }
 
     private func parseMessageBody(_ rawBody: Any) -> [String: Any]? {
