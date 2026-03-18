@@ -29,7 +29,7 @@ private final class UserbackNetworkURLProtocol: URLProtocol {
     private static let handledKey = "HandledByUserbackNetworkObserver"
 
     private var session: URLSession?
-    private var task: URLSessionDataTask?
+    private var dataTask: URLSessionDataTask?
     private var sessionDelegate: NetworkSessionDelegate?
     private var responseBodySize: Int64 = 0
     private var requestStart = Date()
@@ -92,14 +92,14 @@ private final class UserbackNetworkURLProtocol: URLProtocol {
         self.sessionDelegate = delegate
 
         let task = session.dataTask(with: mutableRequest as URLRequest)
-        self.task = task
+        self.dataTask = task
         task.resume()
     }
 
     override func stopLoading() {
-        task?.cancel()
+        dataTask?.cancel()
         session?.invalidateAndCancel()
-        task = nil
+        dataTask = nil
         session = nil
         sessionDelegate = nil
     }
