@@ -315,6 +315,50 @@ private struct EndpointTestScreen: View {
                     endpointStatus = "Called addCustomEvent()"
                 }
             }
+
+            Section("Native Observers") {
+                Button("Start Log Observer") {
+                    LogObserver.shared.start()
+                    endpointStatus = "Started LogObserver"
+                }
+
+                Button("Stop Log Observer") {
+                    LogObserver.shared.stop()
+                    endpointStatus = "Stopped LogObserver"
+                }
+
+                Button("Start Network Observer") {
+                    NetworkObserver.shared.start()
+                    endpointStatus = "Started NetworkObserver"
+                }
+
+                Button("Stop Network Observer") {
+                    NetworkObserver.shared.stop()
+                    endpointStatus = "Stopped NetworkObserver"
+                }
+
+                Button("Emit Test Console Log") {
+                    print("[Sample] Native console event at \(Date())")
+                    endpointStatus = "Printed test console log"
+                }
+
+                Button("Trigger Test Network Request") {
+                    guard let url = URL(string: "https://httpbin.org/get") else {
+                        endpointStatus = "Invalid test URL"
+                        return
+                    }
+
+                    URLSession.shared.dataTask(with: url) { _, _, error in
+                        DispatchQueue.main.async {
+                            if let error {
+                                endpointStatus = "Test request failed: \(error.localizedDescription)"
+                            } else {
+                                endpointStatus = "Sent test request to httpbin"
+                            }
+                        }
+                    }.resume()
+                }
+            }
         }
         .navigationTitle("Endpoint Tester")
     }

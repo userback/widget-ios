@@ -16,6 +16,46 @@ Run tests locally:
 swift test
 ```
 
+## Native Observer Examples
+
+The SDK includes optional native observers that forward console and network events into `UserbackSDK.shared.sendNativeEvent(...)`.
+
+### 1) Start observers after SDK start
+
+```swift
+import UserbackSDK
+
+UserbackSDK.shared.start(
+	accessToken: "YOUR_ACCESS_TOKEN"
+)
+
+LogObserver.shared.start()
+NetworkObserver.shared.start()
+```
+
+### 2) Generate sample events
+
+```swift
+// Console event
+print("checkout button tapped")
+
+// Network event
+URLSession.shared.dataTask(with: URL(string: "https://httpbin.org/get")!).resume()
+```
+
+### 3) Stop observers (optional)
+
+```swift
+LogObserver.shared.stop()
+NetworkObserver.shared.stop()
+```
+
+Notes:
+
+- `LogObserver` redirects `stdout/stderr` while running.
+- `NetworkObserver` uses `URLProtocol`, so start it once and stop it during teardown if needed.
+- In the sample app, you can test both from the Endpoint Tester screen.
+
 ## Example App Config (Dev)
 
 The sample iOS app reads Userback config from a real Info.plist file:
