@@ -109,10 +109,12 @@ private final class UserbackNetworkURLProtocol: URLProtocol {
         let response = transaction?.response as? HTTPURLResponse
 
         let event: [String: Any] = [
-            "type": "network",
-            "url": task.originalRequest?.url?.absoluteString ?? "",
+            "eventType": "network",
+            "name": task.originalRequest?.url?.absoluteString ?? "",
+            "type": initiatorType(for: task.originalRequest),
             "method": task.originalRequest?.httpMethod ?? "GET",
             "status": response?.statusCode ?? 0,
+            "responseStatus": response?.statusCode ?? 0,
             "startTime": requestStart.timeIntervalSince1970 * 1000,
             "duration": Date().timeIntervalSince(requestStart) * 1000,
             "domainLookupStart": ms(transaction?.domainLookupStartDate),
@@ -122,7 +124,8 @@ private final class UserbackNetworkURLProtocol: URLProtocol {
             "requestStart": ms(transaction?.requestStartDate),
             "responseStart": ms(transaction?.responseStartDate),
             "responseEnd": ms(transaction?.responseEndDate),
-            "transferSize": responseBodySize
+            "encodedBodySize": transaction?.countOfResponseBodyBytesReceived ?? 0,
+            "transferSize": responseBodySize,
         ]
 
         Task { @MainActor in
@@ -133,6 +136,38 @@ private final class UserbackNetworkURLProtocol: URLProtocol {
     private func ms(_ date: Date?) -> Double {
         guard let date else { return 0 }
         return date.timeIntervalSince1970 * 1000
+    }
+
+    private func initiatorType(for request: URLRequest?) -> String {
+        guard let request else { return "other" }
+
+        if let fetchDest = request.value(forHTTPHeaderField: "Sec-Fetch-Dest")?.lowercased(),
+           !fetchDest.isEmpty,
+           fetchDest != "empty" {
+            return fetchDest
+        }
+
+        if let xRequestedWith = request.value(forHTTPHeaderField: "X-Requested-With")?.lowercased(),
+           xRequestedWith == "xmlhttprequest" {
+            return "xmlhttprequest"
+        }
+
+        if let accept = request.value(forHTTPHeaderField: "Accept")?.lowercased() {
+            if accept.contains("javascript") {
+                return "script"
+            }
+            if accept.contains("text/css") {
+                return "style"
+            }
+            if accept.contains("image/") {
+                return "image"
+            }
+            if accept.contains("text/html") {
+                return "document"
+            }
+        }
+
+        return "other"
     }
 }
 

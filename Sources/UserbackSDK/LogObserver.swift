@@ -25,23 +25,62 @@ public final class LogObserver {
         dup2(newPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
         dup2(newPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
 
+        let mirroredStdoutFD = originalStdout
+
         newPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty,
-                  let raw = String(data: data, encoding: .utf8) else {
+            guard !data.isEmpty else {
                 return
             }
 
-            let message = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !message.isEmpty else { return }
+            // Mirror captured output back to original stdout so Xcode console still shows logs.
+            if let stdoutFD = mirroredStdoutFD {
+                data.withUnsafeBytes { buffer in
+                    guard let base = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                    var bytesRemaining = buffer.count
+                    var offset = 0
 
-            let event: [String: Any] = [
-                "type": "console",
-                "message": message
-            ]
+                    while bytesRemaining > 0 {
+                        let written = write(stdoutFD, base.advanced(by: offset), bytesRemaining)
+                        if written <= 0 { break }
+                        bytesRemaining -= written
+                        offset += written
+                    }
+                }
+            }
 
-            Task { @MainActor in
-                UserbackSDK.shared.sendNativeEvent(event)
+            guard let raw = String(data: data, encoding: .utf8) else {
+                return
+            }
+
+            let messages = raw
+                .split(whereSeparator: \.isNewline)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            for message in messages {
+                // Avoid feedback loops from SDK/internal observer logs.
+                if message.hasPrefix("UserbackSDK:") ||
+                    message.hasPrefix("LogObserver") ||
+                    message == "================" {
+                    continue
+                }
+
+                // Ignore noisy Apple system logs that are not app-level diagnostics.
+                if message.hasPrefix("OSLOG-") ||
+                    message.localizedCaseInsensitiveContains("RemoteTextInput") ||
+                    message.localizedCaseInsensitiveContains("RTILog") {
+                    continue
+                }
+
+                let event: [String: Any] = [
+                    "type": "console",
+                    "message": message
+                ]
+
+                Task { @MainActor in
+                    UserbackSDK.shared.sendNativeEvent(event)
+                }
             }
         }
 

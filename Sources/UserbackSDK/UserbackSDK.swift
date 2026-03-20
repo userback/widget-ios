@@ -68,6 +68,7 @@ public final class UserbackSDK: NSObject {
     private var flushTimer: Timer?
     private var messageHandlerProxy: WeakScriptMessageHandler?
     private var activationObservers: [NSObjectProtocol] = []
+    private var systemWarningObservers: [NSObjectProtocol] = []
     private var pendingWindowAttachment = false
     private var latestWidgetConfig: [String: Any]?
 
@@ -120,6 +121,7 @@ public final class UserbackSDK: NSObject {
 
     public func start(with configuration: Configuration) {
         self.configuration = configuration
+        startNativeObserversIfNeeded()
 
         if webView != nil {
             reloadWidget()
@@ -151,6 +153,7 @@ public final class UserbackSDK: NSObject {
         webView = nil
         pendingWindowAttachment = false
         latestWidgetConfig = nil
+        stopNativeObserversIfNeeded()
         removeActivationObservers()
     }
 
@@ -180,6 +183,108 @@ public final class UserbackSDK: NSObject {
 
     public func startNativeRecording() {
         log("Native recording hook called. Plug in your native recorder integration here.")
+    }
+
+    private func startNativeObserversIfNeeded() {
+        LogObserver.shared.start()
+        NetworkObserver.shared.start()
+        startSystemWarningObserversIfNeeded()
+    }
+
+    private func stopNativeObserversIfNeeded() {
+        stopSystemWarningObserversIfNeeded()
+        LogObserver.shared.stop()
+        NetworkObserver.shared.stop()
+    }
+
+    private func startSystemWarningObserversIfNeeded() {
+        guard systemWarningObservers.isEmpty else { return }
+
+        let center = NotificationCenter.default
+        let memoryObserver = center.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.sendSystemWarningEvent(
+                    name: "memory_warning",
+                    message: "iOS memory warning received.",
+                    trackType: "warn"
+                )
+            }
+        }
+
+        let thermalObserver = center.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleThermalStateChange()
+            }
+        }
+
+        systemWarningObservers = [memoryObserver, thermalObserver]
+    }
+
+    private func stopSystemWarningObserversIfNeeded() {
+        guard !systemWarningObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        systemWarningObservers.forEach { center.removeObserver($0) }
+        systemWarningObservers.removeAll()
+    }
+
+    private func handleThermalStateChange() {
+        let thermalState = ProcessInfo.processInfo.thermalState
+
+        let stateName: String
+        let trackType: String
+
+        switch thermalState {
+            case .nominal:
+                return
+            case .fair:
+                stateName = "fair"
+                trackType = "warn"
+            case .serious:
+                stateName = "serious"
+                trackType = "warn"
+            case .critical:
+                stateName = "critical"
+                trackType = "error"
+            @unknown default:
+                stateName = "unknown"
+                trackType = "warn"
+        }
+
+        sendSystemWarningEvent(
+            name: "thermal_state",
+            message: "iOS thermal state changed to \(stateName).",
+            trackType: trackType,
+            additional: ["thermal_state": stateName]
+        )
+    }
+
+    private func sendSystemWarningEvent(
+        name: String,
+        message: String,
+        trackType: String,
+        additional: [String: Any] = [:]
+    ) {
+        var event: [String: Any] = [
+            "type": "warn",
+            "_track_type": trackType,
+            "name": name,
+            "message": message,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+
+        for (key, value) in additional {
+            event[key] = value
+        }
+
+        sendNativeEvent(event)
     }
 
     public func sendNativeEvent(_ event: [String: Any]) {
@@ -442,7 +547,7 @@ public final class UserbackSDK: NSObject {
                     </body>
                 </html>
                 """
-                webView.loadHTMLString(html, baseURL: URL(string: "https://static.userback.io"))
+                webView.loadHTMLString(html, baseURL: nil)
         } else if let url = URL(string: configuredURLString) {
                 webView.load(URLRequest(url: url))
         }
@@ -608,8 +713,33 @@ public final class UserbackSDK: NSObject {
         eventBuffer.removeAll()
 
         for event in pending {
-            guard let json = jsonString(from: event) else { continue }
-            evaluateJavaScript("window.Userback && window.Userback.addNativeEvent(\(json));")
+            sendNativeEventToJavaScript(event)
+        }
+    }
+
+    private func sendNativeEventToJavaScript(_ event: [String: Any]) {
+        let message: [String: Any] = [
+            "type": "native_event",
+            "payload": event
+        ]
+
+        let customEventName = nativeEventName(for: event)
+
+        sendMessageToJavaScript(
+            message,
+            customEventName: customEventName,
+            successLogPrefix: "Native event"
+        )
+    }
+
+    private func nativeEventName(for event: [String: Any]) -> String {
+        let eventType = (event["eventType"] as? String)?.lowercased()
+
+        switch eventType {
+            case "network":
+                return "userback:nativeNetworkEvent"
+            default:
+                return "userback:nativeLogEvent"
         }
     }
 
@@ -953,30 +1083,62 @@ extension UserbackSDK: WKScriptMessageHandler {
     }
 
     private func sendScreenshotToJavaScript(_ dataURL: String) {
-        let jsDataURL = jsQuotedString(dataURL)
+        let message: [String: Any] = [
+            "type": "native_screenshot",
+            "payload": [
+                "data_url": dataURL
+            ]
+        ]
+
+        sendMessageToJavaScript(
+            message,
+            customEventName: "userback:nativeScreenshot",
+            successLogPrefix: "Screenshot"
+        )
+    }
+
+    private func sendMessageToJavaScript(
+        _ message: [String: Any],
+        customEventName: String,
+        successLogPrefix: String
+    ) {
+        var enrichedMessage = message
+        enrichedMessage["mobileSDK"] = true
+
+        if var payload = enrichedMessage["payload"] as? [String: Any] {
+            payload["mobileSDK"] = true
+            enrichedMessage["payload"] = payload
+        }
+
+        guard let messageJSON = jsonString(from: enrichedMessage) else {
+            log("\(successLogPrefix) payload serialization failed for JS delivery.")
+            return
+        }
+
+        let eventNameLiteral = jsQuotedString(customEventName)
 
         let script = """
         (function() {
-            var dataURL = \(jsDataURL);
+            var message = \(messageJSON);
+            var eventName = \(eventNameLiteral);
+            var routes = [];
 
-            var message = {
-                type: 'native_screenshot',
-                payload: {
-                    data_url: dataURL
-                }
-            };
-
-            window.dispatchEvent(new CustomEvent('userback:nativeScreenshot', { detail: message }));
-            return;
+            try {
+                window.dispatchEvent(new CustomEvent(eventName, { detail: message }));
+                routes.push('window.dispatchEvent');
+            } catch (error) {
+                routes.push('window.dispatchEvent:error');
+            }
+            return routes.join(', ');
         })();
         """
 
         evaluateJavaScript(script) { [weak self] result, _ in
             guard let route = result as? String else {
-                self?.log("Screenshot captured but JS delivery route was not confirmed.")
+                self?.log("\(successLogPrefix) queued for JS, but delivery route was not confirmed.")
                 return
             }
-            self?.log("Screenshot delivered to JS via: \(route)")
+            self?.log("\(successLogPrefix) delivered to JS via: \(route)")
         }
     }
 
