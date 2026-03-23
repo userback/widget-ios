@@ -69,12 +69,18 @@ public final class LogObserver {
                 // Ignore noisy Apple system logs that are not app-level diagnostics.
                 if message.hasPrefix("OSLOG-") ||
                     message.localizedCaseInsensitiveContains("RemoteTextInput") ||
-                    message.localizedCaseInsensitiveContains("RTILog") {
+                    message.localizedCaseInsensitiveContains("RTILog") ||
+                    message.localizedCaseInsensitiveContains("NSAutoresizingMaskLayoutConstraint") ||
+                    message.localizedCaseInsensitiveContains("NSLayoutConstraint") ||
+                    message.localizedCaseInsensitiveContains("Unable to simultaneously satisfy constraints") ||
+                    message.localizedCaseInsensitiveContains("UIViewAlertForUnsatisfiableConstraints") ||
+                    message.localizedCaseInsensitiveContains("_UIToolbarContentView") ||
+                    message.localizedCaseInsensitiveContains("_UIButtonBarStackView") {
                     continue
                 }
 
                 let event: [String: Any] = [
-                    "type": "console",
+                    "type": "log",
                     "message": message
                 ]
 
