@@ -57,6 +57,13 @@ public final class UserbackSDK: NSObject {
         case ready
     }
 
+    private enum WidgetPosition: String {
+        case w
+        case e
+        case sw
+        case se
+    }
+
     private let defaultWidgetJSURL = "https://static.userback.io/widget/v1.js"
     private let flushInterval: TimeInterval = 1.0
     private let bufferLimit = 50
@@ -71,8 +78,12 @@ public final class UserbackSDK: NSObject {
     private var systemWarningObservers: [NSObjectProtocol] = []
     private var pendingWindowAttachment = false
     private var latestWidgetConfig: [String: Any]?
+    private var latestWidgetSize: CGSize?
+    private var webViewLayoutConstraints: [NSLayoutConstraint] = []
+    private weak var webViewContainerView: UIView?
 
     public var onWidgetConfigLoaded: (([String: Any]) -> Void)?
+    public var onWidgetResize: ((CGSize) -> Void)?
 
     private override init() {
         super.init()
@@ -149,16 +160,24 @@ public final class UserbackSDK: NSObject {
         flushTimer = nil
         eventBuffer.removeAll()
         state = .idle
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+        webViewLayoutConstraints.removeAll()
+        webViewContainerView = nil
         webView?.removeFromSuperview()
         webView = nil
         pendingWindowAttachment = false
         latestWidgetConfig = nil
+        latestWidgetSize = nil
         stopNativeObserversIfNeeded()
         removeActivationObservers()
     }
 
     public func widgetConfig() -> [String: Any]? {
         latestWidgetConfig
+    }
+
+    public func widgetSize() -> CGSize? {
+        latestWidgetSize
     }
 
     public func widgetConfigValue<T>(forKey key: String) -> T? {
@@ -470,12 +489,10 @@ public final class UserbackSDK: NSObject {
 
     public func close() {
         guard let webView else { return }
-        evaluateJavaScript("window.Userback && window.Userback.close && window.Userback.close();")
         webView.isUserInteractionEnabled = false
         webView.isHidden = true
         webView.transform = .identity
         webView.alpha = 0
-        webView.removeFromSuperview()
     }
 
     private func createWebView() -> WKWebView {
@@ -606,15 +623,66 @@ public final class UserbackSDK: NSObject {
     }
 
     private func pinWebViewToContainer(_ webView: WKWebView, containerView: UIView) {
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+        webViewLayoutConstraints.removeAll()
         webView.removeFromSuperview()
         webView.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-        ])
+        webViewContainerView = containerView
+        applyWidgetSizeConstraints(to: webView, in: containerView)
+    }
+
+    private func applyWidgetSizeConstraints(to webView: WKWebView, in containerView: UIView) {
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+
+        if let size = latestWidgetSize, size.width > 0, size.height > 0 {
+            var constraints: [NSLayoutConstraint] = [
+                webView.widthAnchor.constraint(equalToConstant: size.width),
+                webView.heightAnchor.constraint(equalToConstant: size.height),
+            ]
+
+            switch widgetPositionFromConfig() {
+                case .w:
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
+                    constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
+                case .e:
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
+                    constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
+                case .sw:
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
+                case .se:
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
+            }
+
+            webViewLayoutConstraints = constraints
+        } else {
+            webViewLayoutConstraints = [
+                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                webView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ]
+        }
+
+        NSLayoutConstraint.activate(webViewLayoutConstraints)
+    }
+
+    private func widgetPositionFromConfig() -> WidgetPosition {
+        guard let rawPosition = latestWidgetConfig?["position"] as? String,
+              let position = WidgetPosition(rawValue: rawPosition.lowercased()) else {
+            return .se
+        }
+        return position
+    }
+
+    private func applyLatestWidgetSizeToWebViewIfNeeded() {
+        guard let webView, let containerView = webView.superview ?? webViewContainerView else {
+            return
+        }
+        applyWidgetSizeConstraints(to: webView, in: containerView)
+        containerView.layoutIfNeeded()
     }
 
     private func reloadWidget() {
@@ -915,8 +983,7 @@ extension UserbackSDK: WKScriptMessageHandler {
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "userbackSDK" else { return }
 
-        guard let body = parseMessageBody(message.body),
-              let type = body["type"] as? String else {
+        guard let body = parseMessageBody(message.body) else {
             if let body = message.body as? String,
                body.caseInsensitiveCompare("close") == .orderedSame {
                 close()
@@ -926,26 +993,28 @@ extension UserbackSDK: WKScriptMessageHandler {
             return
         }
 
-        switch type.lowercased() {
+        guard let messageType = (body["type"] as? String) ?? (body["event"] as? String) else {
+            log("Ignoring script message without type/event: \(body)")
+            return
+        }
+
+        switch messageType.lowercased() {
             case "load":
                 guard let payload = body["payload"] as? [String: Any] else {
                     log("Received 'load' message without config payload.")
                     return
                 }
                 latestWidgetConfig = payload
+                applyLatestWidgetSizeToWebViewIfNeeded()
                 onWidgetConfigLoaded?(payload)
+            case "widget_resize":
+                handleWidgetResize(body)
             case "widget_action":
                 handleWidgetAction(body)
             case "close":
                 close()
             default:
                 break
-        }
-
-        if let event = body["event"] as? String,
-           event.caseInsensitiveCompare("close") == .orderedSame {
-            close()
-            return
         }
     }
 
@@ -972,6 +1041,32 @@ extension UserbackSDK: WKScriptMessageHandler {
             default:
                 log("Ignoring unsupported widget action: \(action)")
         }
+    }
+
+    private func handleWidgetResize(_ body: [String: Any]) {
+        guard let payload = body["payload"] as? [String: Any] else {
+            log("Received 'widget_resize' message without payload.")
+            return
+        }
+
+        let width = (payload["width"] as? NSNumber)?.doubleValue
+            ?? (payload["width"] as? Double)
+            ?? (payload["width"] as? Int).map(Double.init)
+            ?? (payload["width"] as? String).flatMap(Double.init)
+        let height = (payload["height"] as? NSNumber)?.doubleValue
+            ?? (payload["height"] as? Double)
+            ?? (payload["height"] as? Int).map(Double.init)
+            ?? (payload["height"] as? String).flatMap(Double.init)
+
+        guard let width, let height, width >= 0, height >= 0 else {
+            log("Received 'widget_resize' message with invalid width/height.")
+            return
+        }
+
+        let size = CGSize(width: width, height: height)
+        latestWidgetSize = size
+        applyLatestWidgetSizeToWebViewIfNeeded()
+        onWidgetResize?(size)
     }
 
     private func openPortal(forcedTarget target: String?) {
