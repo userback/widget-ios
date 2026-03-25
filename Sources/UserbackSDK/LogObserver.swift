@@ -82,9 +82,15 @@ public final class LogObserver {
                     continue
                 }
 
+                // Trim whitespace and collapse multiple spaces
+                let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+
+                guard !trimmed.isEmpty else { continue }
+
                 let event: [String: Any] = [
                     "type": "log",
-                    "message": message
+                    "message": trimmed
                 ]
 
                 Task { @MainActor in
