@@ -57,6 +57,13 @@ public final class UserbackSDK: NSObject {
         case ready
     }
 
+    private enum WidgetPosition: String {
+        case w
+        case e
+        case sw
+        case se
+    }
+
     private let defaultWidgetJSURL = "https://static.userback.io/widget/v1.js"
     private let flushInterval: TimeInterval = 1.0
     private let bufferLimit = 50
@@ -68,10 +75,15 @@ public final class UserbackSDK: NSObject {
     private var flushTimer: Timer?
     private var messageHandlerProxy: WeakScriptMessageHandler?
     private var activationObservers: [NSObjectProtocol] = []
+    private var systemWarningObservers: [NSObjectProtocol] = []
     private var pendingWindowAttachment = false
     private var latestWidgetConfig: [String: Any]?
+    private var latestWidgetSize: CGSize?
+    private var webViewLayoutConstraints: [NSLayoutConstraint] = []
+    private weak var webViewContainerView: UIView?
 
     public var onWidgetConfigLoaded: (([String: Any]) -> Void)?
+    public var onWidgetResize: ((CGSize) -> Void)?
 
     private override init() {
         super.init()
@@ -120,6 +132,7 @@ public final class UserbackSDK: NSObject {
 
     public func start(with configuration: Configuration) {
         self.configuration = configuration
+        startNativeObserversIfNeeded()
 
         if webView != nil {
             reloadWidget()
@@ -147,15 +160,24 @@ public final class UserbackSDK: NSObject {
         flushTimer = nil
         eventBuffer.removeAll()
         state = .idle
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+        webViewLayoutConstraints.removeAll()
+        webViewContainerView = nil
         webView?.removeFromSuperview()
         webView = nil
         pendingWindowAttachment = false
         latestWidgetConfig = nil
+        latestWidgetSize = nil
+        stopNativeObserversIfNeeded()
         removeActivationObservers()
     }
 
     public func widgetConfig() -> [String: Any]? {
         latestWidgetConfig
+    }
+
+    public func widgetSize() -> CGSize? {
+        latestWidgetSize
     }
 
     public func widgetConfigValue<T>(forKey key: String) -> T? {
@@ -180,6 +202,108 @@ public final class UserbackSDK: NSObject {
 
     public func startNativeRecording() {
         log("Native recording hook called. Plug in your native recorder integration here.")
+    }
+
+    private func startNativeObserversIfNeeded() {
+        LogObserver.shared.start()
+        NetworkObserver.shared.start()
+        startSystemWarningObserversIfNeeded()
+    }
+
+    private func stopNativeObserversIfNeeded() {
+        stopSystemWarningObserversIfNeeded()
+        LogObserver.shared.stop()
+        NetworkObserver.shared.stop()
+    }
+
+    private func startSystemWarningObserversIfNeeded() {
+        guard systemWarningObservers.isEmpty else { return }
+
+        let center = NotificationCenter.default
+        let memoryObserver = center.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.sendSystemWarningEvent(
+                    name: "memory_warning",
+                    message: "iOS memory warning received.",
+                    trackType: "warn"
+                )
+            }
+        }
+
+        let thermalObserver = center.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleThermalStateChange()
+            }
+        }
+
+        systemWarningObservers = [memoryObserver, thermalObserver]
+    }
+
+    private func stopSystemWarningObserversIfNeeded() {
+        guard !systemWarningObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        systemWarningObservers.forEach { center.removeObserver($0) }
+        systemWarningObservers.removeAll()
+    }
+
+    private func handleThermalStateChange() {
+        let thermalState = ProcessInfo.processInfo.thermalState
+
+        let stateName: String
+        let trackType: String
+
+        switch thermalState {
+            case .nominal:
+                return
+            case .fair:
+                stateName = "fair"
+                trackType = "warn"
+            case .serious:
+                stateName = "serious"
+                trackType = "warn"
+            case .critical:
+                stateName = "critical"
+                trackType = "error"
+            @unknown default:
+                stateName = "unknown"
+                trackType = "warn"
+        }
+
+        sendSystemWarningEvent(
+            name: "thermal_state",
+            message: "iOS thermal state changed to \(stateName).",
+            trackType: trackType,
+            additional: ["thermal_state": stateName]
+        )
+    }
+
+    private func sendSystemWarningEvent(
+        name: String,
+        message: String,
+        trackType: String,
+        additional: [String: Any] = [:]
+    ) {
+        var event: [String: Any] = [
+            "type": "warn",
+            "_track_type": trackType,
+            "name": name,
+            "message": message,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+
+        for (key, value) in additional {
+            event[key] = value
+        }
+
+        sendNativeEvent(event)
     }
 
     public func sendNativeEvent(_ event: [String: Any]) {
@@ -365,12 +489,10 @@ public final class UserbackSDK: NSObject {
 
     public func close() {
         guard let webView else { return }
-        evaluateJavaScript("window.Userback && window.Userback.close && window.Userback.close();")
         webView.isUserInteractionEnabled = false
         webView.isHidden = true
         webView.transform = .identity
         webView.alpha = 0
-        webView.removeFromSuperview()
     }
 
     private func createWebView() -> WKWebView {
@@ -442,7 +564,7 @@ public final class UserbackSDK: NSObject {
                     </body>
                 </html>
                 """
-                webView.loadHTMLString(html, baseURL: URL(string: "https://static.userback.io"))
+                webView.loadHTMLString(html, baseURL: nil)
         } else if let url = URL(string: configuredURLString) {
                 webView.load(URLRequest(url: url))
         }
@@ -501,15 +623,66 @@ public final class UserbackSDK: NSObject {
     }
 
     private func pinWebViewToContainer(_ webView: WKWebView, containerView: UIView) {
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+        webViewLayoutConstraints.removeAll()
         webView.removeFromSuperview()
         webView.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-        ])
+        webViewContainerView = containerView
+        applyWidgetSizeConstraints(to: webView, in: containerView)
+    }
+
+    private func applyWidgetSizeConstraints(to webView: WKWebView, in containerView: UIView) {
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+
+        if let size = latestWidgetSize, size.width > 0, size.height > 0 {
+            var constraints: [NSLayoutConstraint] = [
+                webView.widthAnchor.constraint(equalToConstant: size.width),
+                webView.heightAnchor.constraint(equalToConstant: size.height),
+            ]
+
+            switch widgetPositionFromConfig() {
+                case .w:
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
+                    constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
+                case .e:
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
+                    constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
+                case .sw:
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
+                case .se:
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
+            }
+
+            webViewLayoutConstraints = constraints
+        } else {
+            webViewLayoutConstraints = [
+                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                webView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            ]
+        }
+
+        NSLayoutConstraint.activate(webViewLayoutConstraints)
+    }
+
+    private func widgetPositionFromConfig() -> WidgetPosition {
+        guard let rawPosition = latestWidgetConfig?["position"] as? String,
+              let position = WidgetPosition(rawValue: rawPosition.lowercased()) else {
+            return .se
+        }
+        return position
+    }
+
+    private func applyLatestWidgetSizeToWebViewIfNeeded() {
+        guard let webView, let containerView = webView.superview ?? webViewContainerView else {
+            return
+        }
+        applyWidgetSizeConstraints(to: webView, in: containerView)
+        containerView.layoutIfNeeded()
     }
 
     private func reloadWidget() {
@@ -608,8 +781,33 @@ public final class UserbackSDK: NSObject {
         eventBuffer.removeAll()
 
         for event in pending {
-            guard let json = jsonString(from: event) else { continue }
-            evaluateJavaScript("window.Userback && window.Userback.addNativeEvent(\(json));")
+            sendNativeEventToJavaScript(event)
+        }
+    }
+
+    private func sendNativeEventToJavaScript(_ event: [String: Any]) {
+        let message: [String: Any] = [
+            "type": "native_event",
+            "payload": event
+        ]
+
+        let customEventName = nativeEventName(for: event)
+
+        sendMessageToJavaScript(
+            message,
+            customEventName: customEventName,
+            successLogPrefix: "Native event"
+        )
+    }
+
+    private func nativeEventName(for event: [String: Any]) -> String {
+        let eventType = (event["eventType"] as? String)?.lowercased()
+
+        switch eventType {
+            case "network":
+                return "userback:nativeNetworkEvent"
+            default:
+                return "userback:nativeLogEvent"
         }
     }
 
@@ -785,8 +983,7 @@ extension UserbackSDK: WKScriptMessageHandler {
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "userbackSDK" else { return }
 
-        guard let body = parseMessageBody(message.body),
-              let type = body["type"] as? String else {
+        guard let body = parseMessageBody(message.body) else {
             if let body = message.body as? String,
                body.caseInsensitiveCompare("close") == .orderedSame {
                 close()
@@ -796,26 +993,28 @@ extension UserbackSDK: WKScriptMessageHandler {
             return
         }
 
-        switch type.lowercased() {
+        guard let messageType = (body["type"] as? String) ?? (body["event"] as? String) else {
+            log("Ignoring script message without type/event: \(body)")
+            return
+        }
+
+        switch messageType.lowercased() {
             case "load":
                 guard let payload = body["payload"] as? [String: Any] else {
                     log("Received 'load' message without config payload.")
                     return
                 }
                 latestWidgetConfig = payload
+                applyLatestWidgetSizeToWebViewIfNeeded()
                 onWidgetConfigLoaded?(payload)
+            case "widget_resize":
+                handleWidgetResize(body)
             case "widget_action":
                 handleWidgetAction(body)
             case "close":
                 close()
             default:
                 break
-        }
-
-        if let event = body["event"] as? String,
-           event.caseInsensitiveCompare("close") == .orderedSame {
-            close()
-            return
         }
     }
 
@@ -842,6 +1041,32 @@ extension UserbackSDK: WKScriptMessageHandler {
             default:
                 log("Ignoring unsupported widget action: \(action)")
         }
+    }
+
+    private func handleWidgetResize(_ body: [String: Any]) {
+        guard let payload = body["payload"] as? [String: Any] else {
+            log("Received 'widget_resize' message without payload.")
+            return
+        }
+
+        let width = (payload["width"] as? NSNumber)?.doubleValue
+            ?? (payload["width"] as? Double)
+            ?? (payload["width"] as? Int).map(Double.init)
+            ?? (payload["width"] as? String).flatMap(Double.init)
+        let height = (payload["height"] as? NSNumber)?.doubleValue
+            ?? (payload["height"] as? Double)
+            ?? (payload["height"] as? Int).map(Double.init)
+            ?? (payload["height"] as? String).flatMap(Double.init)
+
+        guard let width, let height, width >= 0, height >= 0 else {
+            log("Received 'widget_resize' message with invalid width/height.")
+            return
+        }
+
+        let size = CGSize(width: width, height: height)
+        latestWidgetSize = size
+        applyLatestWidgetSizeToWebViewIfNeeded()
+        onWidgetResize?(size)
     }
 
     private func openPortal(forcedTarget target: String?) {
@@ -953,30 +1178,62 @@ extension UserbackSDK: WKScriptMessageHandler {
     }
 
     private func sendScreenshotToJavaScript(_ dataURL: String) {
-        let jsDataURL = jsQuotedString(dataURL)
+        let message: [String: Any] = [
+            "type": "native_screenshot",
+            "payload": [
+                "data_url": dataURL
+            ]
+        ]
+
+        sendMessageToJavaScript(
+            message,
+            customEventName: "userback:nativeScreenshot",
+            successLogPrefix: "Screenshot"
+        )
+    }
+
+    private func sendMessageToJavaScript(
+        _ message: [String: Any],
+        customEventName: String,
+        successLogPrefix: String
+    ) {
+        var enrichedMessage = message
+        enrichedMessage["mobileSDK"] = true
+
+        if var payload = enrichedMessage["payload"] as? [String: Any] {
+            payload["mobileSDK"] = true
+            enrichedMessage["payload"] = payload
+        }
+
+        guard let messageJSON = jsonString(from: enrichedMessage) else {
+            log("\(successLogPrefix) payload serialization failed for JS delivery.")
+            return
+        }
+
+        let eventNameLiteral = jsQuotedString(customEventName)
 
         let script = """
         (function() {
-            var dataURL = \(jsDataURL);
+            var message = \(messageJSON);
+            var eventName = \(eventNameLiteral);
+            var routes = [];
 
-            var message = {
-                type: 'native_screenshot',
-                payload: {
-                    data_url: dataURL
-                }
-            };
-
-            window.dispatchEvent(new CustomEvent('userback:nativeScreenshot', { detail: message }));
-            return;
+            try {
+                window.dispatchEvent(new CustomEvent(eventName, { detail: message }));
+                routes.push('window.dispatchEvent');
+            } catch (error) {
+                routes.push('window.dispatchEvent:error');
+            }
+            return routes.join(', ');
         })();
         """
 
         evaluateJavaScript(script) { [weak self] result, _ in
             guard let route = result as? String else {
-                self?.log("Screenshot captured but JS delivery route was not confirmed.")
+                self?.log("\(successLogPrefix) queued for JS, but delivery route was not confirmed.")
                 return
             }
-            self?.log("Screenshot delivered to JS via: \(route)")
+            self?.log("\(successLogPrefix) delivered to JS via: \(route)")
         }
     }
 

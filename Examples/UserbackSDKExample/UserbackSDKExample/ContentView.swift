@@ -315,6 +315,65 @@ private struct EndpointTestScreen: View {
                     endpointStatus = "Called addCustomEvent()"
                 }
             }
+
+            Section("Native Logging (Auto-Started)") {
+                Button("Emit Test Console Log") {
+                    print("[Sample] Native console event at \(Date())")
+                    endpointStatus = "Printed test console log"
+                }
+
+                Button("Emit Console Warning") {
+                    print("[Sample][WARN] Simulated warning at \(Date())")
+                    endpointStatus = "Printed warning log"
+                }
+
+                Button("Emit Console Error") {
+                    print("[Sample][ERROR] Simulated error at \(Date())")
+                    endpointStatus = "Printed error log"
+                }
+
+                Button("Emit Delayed Console Log (2s)") {
+                    endpointStatus = "Scheduling delayed log..."
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        print("[Sample] Delayed console log fired at \(Date())")
+                        endpointStatus = "Printed delayed log"
+                    }
+                }
+
+                Button("Trigger Test Network Request") {
+                    guard let url = URL(string: "https://httpbin.org/get") else {
+                        endpointStatus = "Invalid test URL"
+                        return
+                    }
+
+                    URLSession.shared.dataTask(with: url) { _, _, error in
+                        DispatchQueue.main.async {
+                            if let error {
+                                endpointStatus = "Test request failed: \(error.localizedDescription)"
+                            } else {
+                                endpointStatus = "Sent test request to httpbin"
+                            }
+                        }
+                    }.resume()
+                }
+
+                Button("Trigger Test Network Error") {
+                    guard let url = URL(string: "https://nonexistent-userback-sample.invalid") else {
+                        endpointStatus = "Invalid test URL"
+                        return
+                    }
+
+                    URLSession.shared.dataTask(with: url) { _, _, error in
+                        DispatchQueue.main.async {
+                            if let error {
+                                endpointStatus = "Expected network error: \(error.localizedDescription)"
+                            } else {
+                                endpointStatus = "Unexpected success on invalid host"
+                            }
+                        }
+                    }.resume()
+                }
+            }
         }
         .navigationTitle("Endpoint Tester")
     }
