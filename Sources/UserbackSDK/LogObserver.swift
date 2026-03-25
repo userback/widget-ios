@@ -74,6 +74,9 @@ public final class LogObserver {
                     message.localizedCaseInsensitiveContains("NSLayoutConstraint") ||
                     message.localizedCaseInsensitiveContains("Unable to simultaneously satisfy constraints") ||
                     message.localizedCaseInsensitiveContains("UIViewAlertForUnsatisfiableConstraints") ||
+                    message.localizedCaseInsensitiveContains("Probably at least one of the constraints") ||
+                    message.localizedCaseInsensitiveContains("Will attempt to recover by breaking constraint") ||
+                    message.localizedCaseInsensitiveContains("UIConstraintBasedLayoutDebugging category on UIView") ||
                     message.localizedCaseInsensitiveContains("_UIToolbarContentView") ||
                     message.localizedCaseInsensitiveContains("_UIButtonBarStackView") {
                     continue
