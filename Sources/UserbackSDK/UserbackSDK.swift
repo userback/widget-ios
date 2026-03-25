@@ -518,8 +518,7 @@ public final class UserbackSDK: NSObject {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
-        webView.layer.borderColor = UIColor.red.cgColor
-        webView.layer.borderWidth = 2
+        applyWebViewLayerStyle(to: webView)
         webView.alpha = 0
         webView.isOpaque = false
         webView.isHidden = true
@@ -635,6 +634,9 @@ public final class UserbackSDK: NSObject {
     private func applyWidgetSizeConstraints(to webView: WKWebView, in containerView: UIView) {
         NSLayoutConstraint.deactivate(webViewLayoutConstraints)
 
+        let screenWidth = UIScreen.main.bounds.width
+        let offset: CGFloat = (screenWidth > 800) ? 20 : 0
+
         if let size = latestWidgetSize, size.width > 0, size.height > 0 {
             var constraints: [NSLayoutConstraint] = [
                 webView.widthAnchor.constraint(equalToConstant: size.width),
@@ -643,26 +645,26 @@ public final class UserbackSDK: NSObject {
 
             switch widgetPositionFromConfig() {
                 case .w:
-                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: offset))
                     constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
                 case .e:
-                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -offset))
                     constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
                 case .sw:
-                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
-                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: offset))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -offset))
                 case .se:
-                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
-                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -offset))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -offset))
             }
 
             webViewLayoutConstraints = constraints
         } else {
             webViewLayoutConstraints = [
-                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                webView.topAnchor.constraint(equalTo: containerView.topAnchor),
-                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: offset),
+                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -offset),
+                webView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: offset),
+                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -offset),
             ]
         }
 
@@ -677,10 +679,34 @@ public final class UserbackSDK: NSObject {
         return position
     }
 
+    private func applyWebViewLayerStyle(to webView: WKWebView) {
+        let screenWidth = UIScreen.main.bounds.width
+        if screenWidth > 800 {
+            webView.layer.borderColor = UIColor(red: 224/255, green: 224/255, blue: 224/255, alpha: 1).cgColor // #e0e0e0
+            webView.layer.borderWidth = 1
+            webView.layer.cornerRadius = 16
+            webView.layer.shadowColor = UIColor.black.cgColor
+            webView.layer.shadowOpacity = 0.1
+            webView.layer.shadowOffset = CGSize(width: 0, height: 0)
+            webView.layer.shadowRadius = 10
+            webView.layer.masksToBounds = false
+            webView.scrollView.layer.cornerRadius = 16
+            webView.scrollView.clipsToBounds = true
+        } else {
+            webView.layer.borderWidth = 0
+            webView.layer.cornerRadius = 0
+            webView.layer.shadowOpacity = 0
+            webView.layer.masksToBounds = true
+            webView.scrollView.layer.cornerRadius = 0
+            webView.scrollView.clipsToBounds = false
+        }
+    }
+
     private func applyLatestWidgetSizeToWebViewIfNeeded() {
         guard let webView, let containerView = webView.superview ?? webViewContainerView else {
             return
         }
+        applyWebViewLayerStyle(to: webView)
         applyWidgetSizeConstraints(to: webView, in: containerView)
         containerView.layoutIfNeeded()
     }
