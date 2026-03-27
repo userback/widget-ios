@@ -76,6 +76,7 @@ public final class UserbackSDK: NSObject {
     private var messageHandlerProxy: WeakScriptMessageHandler?
     private var activationObservers: [NSObjectProtocol] = []
     private var systemWarningObservers: [NSObjectProtocol] = []
+    private var orientationObserver: NSObjectProtocol?
     private var pendingWindowAttachment = false
     private var latestWidgetConfig: [String: Any]?
     private var latestWidgetSize: CGSize?
@@ -172,6 +173,17 @@ public final class UserbackSDK: NSObject {
         removeActivationObservers()
     }
 
+    /// Call this from your view controller's viewWillTransition(to:with:) for smoother rotation handling.
+    public func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        coordinator.animate(alongsideTransition: { [weak self] _ in
+            guard let self else { return }
+            self.log("viewWillTransition to size: \(size)")
+            self.setNativeResizing(true)
+            self.latestWidgetSize = nil
+            self.applyLatestWidgetSizeToWebViewIfNeeded()
+        })
+    }
+
     public func widgetConfig() -> [String: Any]? {
         latestWidgetConfig
     }
@@ -208,10 +220,12 @@ public final class UserbackSDK: NSObject {
         LogObserver.shared.start()
         NetworkObserver.shared.start()
         startSystemWarningObserversIfNeeded()
+        startOrientationObserverIfNeeded()
     }
 
     private func stopNativeObserversIfNeeded() {
         stopSystemWarningObserversIfNeeded()
+        stopOrientationObserver()
         LogObserver.shared.stop()
         NetworkObserver.shared.stop()
     }
@@ -252,6 +266,37 @@ public final class UserbackSDK: NSObject {
         let center = NotificationCenter.default
         systemWarningObservers.forEach { center.removeObserver($0) }
         systemWarningObservers.removeAll()
+    }
+
+    private func startOrientationObserverIfNeeded() {
+        guard orientationObserver == nil else { return }
+        orientationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let orientation = UIDevice.current.orientation
+                let screenWidth = Int(UIScreen.main.bounds.width)
+                let screenHeight = Int(UIScreen.main.bounds.height)
+                self.log("Device orientation changed: \(orientation.rawValue), screenWidth: \(screenWidth)")
+                self.setNativeResizing(true)
+                self.sendMessageToJavaScript(
+                    ["type": "native_rotate", "payload": ["orientation": orientation.rawValue, "screenWidth": screenWidth, "screenHeight": screenHeight]],
+                    customEventName: "userback:rotate",
+                    successLogPrefix: "Rotate"
+                )
+                self.latestWidgetSize = nil
+                self.applyLatestWidgetSizeToWebViewIfNeeded()
+            }
+        }
+    }
+
+    private func stopOrientationObserver() {
+        guard let observer = orientationObserver else { return }
+        NotificationCenter.default.removeObserver(observer)
+        orientationObserver = nil
     }
 
     private func handleThermalStateChange() {
@@ -635,9 +680,8 @@ public final class UserbackSDK: NSObject {
         NSLayoutConstraint.deactivate(webViewLayoutConstraints)
 
         let screenWidth = UIScreen.main.bounds.width
-        let offset: CGFloat = (screenWidth > 800) ? 20 : 0
 
-        if let size = latestWidgetSize, size.width > 0, size.height > 0 {
+        if let size = latestWidgetSize, size.width > 0, size.height > 0, screenWidth > 800 {
             var constraints: [NSLayoutConstraint] = [
                 webView.widthAnchor.constraint(equalToConstant: size.width),
                 webView.heightAnchor.constraint(equalToConstant: size.height),
@@ -645,26 +689,27 @@ public final class UserbackSDK: NSObject {
 
             switch widgetPositionFromConfig() {
                 case .w:
-                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: offset))
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
                     constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
                 case .e:
-                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -offset))
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
                     constraints.append(webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor))
                 case .sw:
-                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: offset))
-                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -offset))
+                    constraints.append(webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
                 case .se:
-                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -offset))
-                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -offset))
+                    constraints.append(webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor))
+                    constraints.append(webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor))
             }
 
             webViewLayoutConstraints = constraints
         } else {
+            let screenHeight = UIScreen.main.bounds.height
             webViewLayoutConstraints = [
-                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: offset),
-                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -offset),
-                webView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: offset),
-                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -offset),
+                webView.widthAnchor.constraint(equalToConstant: screenWidth),
+                webView.heightAnchor.constraint(equalToConstant: screenHeight),
+                webView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+                webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
             ]
         }
 
@@ -684,22 +729,27 @@ public final class UserbackSDK: NSObject {
         if screenWidth > 800 {
             webView.layer.borderColor = UIColor(red: 224/255, green: 224/255, blue: 224/255, alpha: 1).cgColor // #e0e0e0
             webView.layer.borderWidth = 1
-            webView.layer.cornerRadius = 16
+            webView.layer.cornerRadius = 0
             webView.layer.shadowColor = UIColor.black.cgColor
             webView.layer.shadowOpacity = 0.1
             webView.layer.shadowOffset = CGSize(width: 0, height: 0)
             webView.layer.shadowRadius = 10
             webView.layer.masksToBounds = false
-            webView.scrollView.layer.cornerRadius = 16
-            webView.scrollView.clipsToBounds = true
+            webView.scrollView.layer.cornerRadius = 0
+            webView.scrollView.clipsToBounds = false
         } else {
-            webView.layer.borderWidth = 0
+            webView.layer.borderColor = UIColor.red.cgColor
+            webView.layer.borderWidth = 2
             webView.layer.cornerRadius = 0
             webView.layer.shadowOpacity = 0
             webView.layer.masksToBounds = true
             webView.scrollView.layer.cornerRadius = 0
             webView.scrollView.clipsToBounds = false
         }
+    }
+
+    private func setNativeResizing(_ resizing: Bool) {
+        webView?.evaluateJavaScript("window.__nativeResizing = \(resizing);")
     }
 
     private func applyLatestWidgetSizeToWebViewIfNeeded() {
@@ -709,6 +759,21 @@ public final class UserbackSDK: NSObject {
         applyWebViewLayerStyle(to: webView)
         applyWidgetSizeConstraints(to: webView, in: containerView)
         containerView.layoutIfNeeded()
+        applyBreakpoint(in: webView)
+    }
+
+    private func applyBreakpoint(in webView: WKWebView) {
+        let isTablet = UIScreen.main.bounds.width > 800
+        webView.evaluateJavaScript("""
+            var container = document.querySelector('.userback-button-container');
+            if (container) {
+                if (\(isTablet)) {
+                    container.setAttribute('data-breakpoint', 'tablet');
+                } else {
+                    container.removeAttribute('data-breakpoint');
+                }
+            }
+        """)
     }
 
     private func reloadWidget() {
