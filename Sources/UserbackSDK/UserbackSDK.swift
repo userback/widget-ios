@@ -78,6 +78,7 @@ public final class UserbackSDK: NSObject {
     private var systemWarningObservers: [NSObjectProtocol] = []
     private var orientationObserver: NSObjectProtocol?
     private var pendingWindowAttachment = false
+    private var formOpenTimeoutTask: DispatchWorkItem?
     private var latestWidgetConfig: [String: Any]?
     private var latestWidgetSize: CGSize?
     private var webViewLayoutConstraints: [NSLayoutConstraint] = []
@@ -171,17 +172,6 @@ public final class UserbackSDK: NSObject {
         latestWidgetSize = nil
         stopNativeObserversIfNeeded()
         removeActivationObservers()
-    }
-
-    /// Call this from your view controller's viewWillTransition(to:with:) for smoother rotation handling.
-    public func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
-        coordinator.animate(alongsideTransition: { [weak self] _ in
-            guard let self else { return }
-            self.log("viewWillTransition to size: \(size)")
-            self.setNativeResizing(true)
-            self.latestWidgetSize = nil
-            self.applyLatestWidgetSizeToWebViewIfNeeded()
-        })
     }
 
     public func widgetConfig() -> [String: Any]? {
@@ -428,6 +418,15 @@ public final class UserbackSDK: NSObject {
         webView.alpha = 1
         webView.transform = .identity
         webView.isUserInteractionEnabled = true
+
+        formOpenTimeoutTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.log("openForm timed out — JS SDK did not respond. Closing WebView.")
+            self.close()
+        }
+        formOpenTimeoutTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: task)
     }
 
     public func openPortal() {
@@ -680,8 +679,9 @@ public final class UserbackSDK: NSObject {
         NSLayoutConstraint.deactivate(webViewLayoutConstraints)
 
         let screenWidth = UIScreen.main.bounds.width
+        let isModal = latestWidgetConfig?["use_modal"] as? Bool == true
 
-        if let size = latestWidgetSize, size.width > 0, size.height > 0, screenWidth > 800 {
+        if !isModal, let size = latestWidgetSize, size.width > 0, size.height > 0, screenWidth > 800 {
             var constraints: [NSLayoutConstraint] = [
                 webView.widthAnchor.constraint(equalToConstant: size.width),
                 webView.heightAnchor.constraint(equalToConstant: size.height),
@@ -1156,6 +1156,8 @@ extension UserbackSDK: WKScriptMessageHandler {
 
         let size = CGSize(width: width, height: height)
         latestWidgetSize = size
+        formOpenTimeoutTask?.cancel()
+        formOpenTimeoutTask = nil
         applyLatestWidgetSizeToWebViewIfNeeded()
         onWidgetResize?(size)
     }
