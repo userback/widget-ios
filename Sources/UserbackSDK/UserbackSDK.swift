@@ -760,6 +760,15 @@ public final class UserbackSDK: NSObject {
         applyWidgetSizeConstraints(to: webView, in: containerView)
         containerView.layoutIfNeeded()
         applyBreakpoint(in: webView)
+        if state == .ready {
+            let deviceWidth = Int(UIScreen.main.bounds.width)
+            let deviceHeight = Int(UIScreen.main.bounds.height)
+            sendMessageToJavaScript(
+                ["type": "native_device_size", "payload": ["deviceWidth": deviceWidth, "deviceHeight": deviceHeight]],
+                customEventName: "userback:nativeDeviceSize",
+                successLogPrefix: "Device size"
+            )
+        }
     }
 
     private func applyBreakpoint(in webView: WKWebView) {
@@ -1154,7 +1163,7 @@ extension UserbackSDK: WKScriptMessageHandler {
             return
         }
 
-        let size = CGSize(width: width, height: height)
+        let size = CGSize(width: width, height: height + 20)
         latestWidgetSize = size
         formOpenTimeoutTask?.cancel()
         formOpenTimeoutTask = nil
