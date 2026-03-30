@@ -678,10 +678,11 @@ public final class UserbackSDK: NSObject {
     private func applyWidgetSizeConstraints(to webView: WKWebView, in containerView: UIView) {
         NSLayoutConstraint.deactivate(webViewLayoutConstraints)
 
-        let screenWidth = UIScreen.main.bounds.width
+        let containerWidth = containerView.bounds.width
+        let containerHeight = containerView.bounds.height
         let isModal = latestWidgetConfig?["use_modal"] as? Bool == true
 
-        if !isModal, let size = latestWidgetSize, size.width > 0, size.height > 0, screenWidth > 800 {
+        if !isModal, let size = latestWidgetSize, size.width > 0, size.height > 0, containerWidth > 800 {
             var constraints: [NSLayoutConstraint] = [
                 webView.widthAnchor.constraint(equalToConstant: size.width),
                 webView.heightAnchor.constraint(equalToConstant: size.height),
@@ -704,10 +705,9 @@ public final class UserbackSDK: NSObject {
 
             webViewLayoutConstraints = constraints
         } else {
-            let screenHeight = UIScreen.main.bounds.height
             webViewLayoutConstraints = [
-                webView.widthAnchor.constraint(equalToConstant: screenWidth),
-                webView.heightAnchor.constraint(equalToConstant: screenHeight),
+                webView.widthAnchor.constraint(equalToConstant: containerWidth),
+                webView.heightAnchor.constraint(equalToConstant: containerHeight),
                 webView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
                 webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
             ]
@@ -761,8 +761,9 @@ public final class UserbackSDK: NSObject {
         containerView.layoutIfNeeded()
         applyBreakpoint(in: webView)
         if state == .ready {
-            let deviceWidth = Int(UIScreen.main.bounds.width)
-            let deviceHeight = Int(UIScreen.main.bounds.height)
+            let containerBounds = containerView.bounds
+            let deviceWidth = Int(containerBounds.width)
+            let deviceHeight = Int(containerBounds.height)
             sendMessageToJavaScript(
                 ["type": "native_device_size", "payload": ["deviceWidth": deviceWidth, "deviceHeight": deviceHeight]],
                 customEventName: "userback:nativeDeviceSize",
