@@ -607,7 +607,8 @@ public final class UserbackSDK: NSObject {
                     </body>
                 </html>
                 """
-                webView.loadHTMLString(html, baseURL: nil)
+                let baseURL = URL(string: configuredURLString).flatMap { URL(string: "\($0.scheme ?? "https")://\($0.host ?? "")") }
+                webView.loadHTMLString(html, baseURL: baseURL)
         } else if let url = URL(string: configuredURLString) {
                 webView.load(URLRequest(url: url))
         }
@@ -1112,6 +1113,13 @@ extension UserbackSDK: WKScriptMessageHandler {
                 handleWidgetResize(body)
             case "widget_action":
                 handleWidgetAction(body)
+            case "load_error":
+                let message = (body["payload"] as? [String: Any])?["message"] as? String ?? "Unknown error"
+                log("JS SDK load error: \(message). Closing WebView.")
+                close()
+            case "hcaptcha_required":
+                let message = (body["payload"] as? [String: Any])?["message"] as? String ?? "hCaptcha required"
+                log("JS SDK hCaptcha required: \(message). Closing WebView.")
             case "close":
                 close()
             default:
@@ -1265,12 +1273,18 @@ extension UserbackSDK: WKScriptMessageHandler {
     private func captureActiveWindowScreenshotDataURL() -> String? {
         guard let window = activeWindow() else { return nil }
 
+        let savedOffset = webView?.scrollView.contentOffset
+
         let rendererFormat = UIGraphicsImageRendererFormat.default()
         rendererFormat.scale = UIScreen.main.scale
 
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: rendererFormat)
         let screenshot = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+
+        if let offset = savedOffset {
+            webView?.scrollView.setContentOffset(offset, animated: false)
         }
 
         guard let data = screenshot.jpegData(compressionQuality: 0.8) else {
