@@ -414,10 +414,10 @@ public final class UserbackSDK: NSObject {
         }
 
         webView.superview?.bringSubviewToFront(webView)
-        webView.isHidden = false
-        webView.alpha = 1
+        webView.isHidden = true
+        webView.alpha = 0
         webView.transform = .identity
-        webView.isUserInteractionEnabled = true
+        webView.isUserInteractionEnabled = false
 
         formOpenTimeoutTask?.cancel()
         let task = DispatchWorkItem { [weak self] in
@@ -739,8 +739,7 @@ public final class UserbackSDK: NSObject {
             webView.scrollView.layer.cornerRadius = 0
             webView.scrollView.clipsToBounds = false
         } else {
-            webView.layer.borderColor = UIColor.red.cgColor
-            webView.layer.borderWidth = 2
+            webView.layer.borderWidth = 0
             webView.layer.cornerRadius = 0
             webView.layer.shadowOpacity = 0
             webView.layer.masksToBounds = true
@@ -1173,10 +1172,16 @@ extension UserbackSDK: WKScriptMessageHandler {
         }
 
         let size = CGSize(width: width, height: height + 20)
+        let isLast = payload["last"] as? Bool == true
         latestWidgetSize = size
         formOpenTimeoutTask?.cancel()
         formOpenTimeoutTask = nil
         applyLatestWidgetSizeToWebViewIfNeeded()
+        if isLast {
+            webView?.isHidden = false
+            webView?.alpha = 1
+            webView?.isUserInteractionEnabled = true
+        }
         onWidgetResize?(size)
     }
 
