@@ -7,7 +7,29 @@ This repository contains `UserbackSDK`, an iOS SDK provided as a Swift Package.
 
 ## Installation
 
-Add the package to your app in Xcode: `File > Add Packages...` and select this repository (or the remote URL when published).
+### Swift Package Manager
+
+In Xcode, go to `File > Add Package Dependencies...` and enter:
+
+```
+https://github.com/userback/widget-ios
+```
+
+Select a version and add `UserbackSDK` to your target.
+
+### Package.swift
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/userback/widget-ios", from: "1.0.0")
+],
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: ["UserbackSDK"]
+    )
+]
+```
 
 ## Setup
 

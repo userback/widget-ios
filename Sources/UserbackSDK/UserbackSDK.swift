@@ -379,7 +379,7 @@ public final class UserbackSDK: NSObject {
         callUserback(function: "destroy", arguments: [keepInstance, keepRecorder])
     }
 
-    public func openForm(mode: String = "general", directTo: String? = nil) {
+    public func openForm(mode: String = "", directTo: String? = nil) {
         if webView == nil {
             guard activeWindow() != nil else {
                 pendingWindowAttachment = true
@@ -946,15 +946,18 @@ public final class UserbackSDK: NSObject {
             "dpi_scale": scale
         ]
 
+        var devOverrides = ""
+        if let widgetCSS = configuration?.widgetCSS { devOverrides += "Userback.widget_css = \(jsonLiteral(widgetCSS));\n" }
+        if let surveyURL = configuration?.surveyURL { devOverrides += "Userback.survey_url = \(jsonLiteral(surveyURL));\n" }
+        if let requestURL = configuration?.requestURL { devOverrides += "Userback.request_url = \(jsonLiteral(requestURL));\n" }
+        if let trackURL = configuration?.trackURL { devOverrides += "Userback.track_url = \(jsonLiteral(trackURL));\n" }
+
         return """
         window.Userback = window.Userback || {};
         Userback.load_type = "mobile_sdk";
         Userback.access_token = \(jsonLiteral(configuration?.accessToken));
         Userback.user_data = \(jsonLiteral(configuration?.userData));
-        Userback.widget_css = \(jsonLiteral(configuration?.widgetCSS));
-        Userback.survey_url = \(jsonLiteral(configuration?.surveyURL));
-        Userback.request_url = \(jsonLiteral(configuration?.requestURL));
-        Userback.track_url = \(jsonLiteral(configuration?.trackURL));
+        \(devOverrides)
         Userback.native_env = \(jsonLiteral(nativeEnv));
         Userback.native_ua_data = \(jsonLiteral(nativeUAData()));
         """
@@ -1112,6 +1115,9 @@ extension UserbackSDK: WKScriptMessageHandler {
                 handleWidgetResize(body)
             case "widget_action":
                 handleWidgetAction(body)
+            case "open_feedback_view":
+                latestWidgetSize = nil
+                applyLatestWidgetSizeToWebViewIfNeeded()
             case "load_error":
                 let message = (body["payload"] as? [String: Any])?["message"] as? String ?? "Unknown error"
                 log("JS SDK load error: \(message). Closing WebView.")

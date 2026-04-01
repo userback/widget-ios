@@ -142,6 +142,11 @@ private struct ProfileScreen: View {
 
                 Section("Support") {
                     Button {
+                        UserbackSDK.shared.openForm()
+                    } label: {
+                        Label("Open Form", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    Button {
                         UserbackSDK.shared.openForm(mode: "general")
                     } label: {
                         Label("Send Feedback", systemImage: "bubble.left.and.bubble.right")
