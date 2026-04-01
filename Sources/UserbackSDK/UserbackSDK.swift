@@ -76,7 +76,9 @@ public final class UserbackSDK: NSObject {
     private var messageHandlerProxy: WeakScriptMessageHandler?
     private var activationObservers: [NSObjectProtocol] = []
     private var systemWarningObservers: [NSObjectProtocol] = []
+    private var orientationObserver: NSObjectProtocol?
     private var pendingWindowAttachment = false
+    private var formOpenTimeoutTask: DispatchWorkItem?
     private var latestWidgetConfig: [String: Any]?
     private var latestWidgetSize: CGSize?
     private var webViewLayoutConstraints: [NSLayoutConstraint] = []
@@ -208,10 +210,12 @@ public final class UserbackSDK: NSObject {
         LogObserver.shared.start()
         NetworkObserver.shared.start()
         startSystemWarningObserversIfNeeded()
+        startOrientationObserverIfNeeded()
     }
 
     private func stopNativeObserversIfNeeded() {
         stopSystemWarningObserversIfNeeded()
+        stopOrientationObserver()
         LogObserver.shared.stop()
         NetworkObserver.shared.stop()
     }
@@ -252,6 +256,37 @@ public final class UserbackSDK: NSObject {
         let center = NotificationCenter.default
         systemWarningObservers.forEach { center.removeObserver($0) }
         systemWarningObservers.removeAll()
+    }
+
+    private func startOrientationObserverIfNeeded() {
+        guard orientationObserver == nil else { return }
+        orientationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let orientation = UIDevice.current.orientation
+                let screenWidth = Int(UIScreen.main.bounds.width)
+                let screenHeight = Int(UIScreen.main.bounds.height)
+                self.log("Device orientation changed: \(orientation.rawValue), screenWidth: \(screenWidth)")
+                self.setNativeResizing(true)
+                self.sendMessageToJavaScript(
+                    ["type": "native_rotate", "payload": ["orientation": orientation.rawValue, "screenWidth": screenWidth, "screenHeight": screenHeight]],
+                    customEventName: "userback:rotate",
+                    successLogPrefix: "Rotate"
+                )
+                self.latestWidgetSize = nil
+                self.applyLatestWidgetSizeToWebViewIfNeeded()
+            }
+        }
+    }
+
+    private func stopOrientationObserver() {
+        guard let observer = orientationObserver else { return }
+        NotificationCenter.default.removeObserver(observer)
+        orientationObserver = nil
     }
 
     private func handleThermalStateChange() {
@@ -383,6 +418,15 @@ public final class UserbackSDK: NSObject {
         webView.alpha = 1
         webView.transform = .identity
         webView.isUserInteractionEnabled = true
+
+        formOpenTimeoutTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.log("openForm timed out — JS SDK did not respond. Closing WebView.")
+            self.close()
+        }
+        formOpenTimeoutTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: task)
     }
 
     public func openPortal() {
@@ -518,8 +562,7 @@ public final class UserbackSDK: NSObject {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
-        webView.layer.borderColor = UIColor.red.cgColor
-        webView.layer.borderWidth = 2
+        applyWebViewLayerStyle(to: webView)
         webView.alpha = 0
         webView.isOpaque = false
         webView.isHidden = true
@@ -564,7 +607,8 @@ public final class UserbackSDK: NSObject {
                     </body>
                 </html>
                 """
-                webView.loadHTMLString(html, baseURL: nil)
+                let baseURL = URL(string: configuredURLString).flatMap { URL(string: "\($0.scheme ?? "https")://\($0.host ?? "")") }
+                webView.loadHTMLString(html, baseURL: baseURL)
         } else if let url = URL(string: configuredURLString) {
                 webView.load(URLRequest(url: url))
         }
@@ -635,7 +679,11 @@ public final class UserbackSDK: NSObject {
     private func applyWidgetSizeConstraints(to webView: WKWebView, in containerView: UIView) {
         NSLayoutConstraint.deactivate(webViewLayoutConstraints)
 
-        if let size = latestWidgetSize, size.width > 0, size.height > 0 {
+        let containerWidth = containerView.bounds.width
+        let containerHeight = containerView.bounds.height
+        let isModal = latestWidgetConfig?["use_modal"] as? Bool == true
+
+        if !isModal, let size = latestWidgetSize, size.width > 0, size.height > 0, containerWidth > 800 {
             var constraints: [NSLayoutConstraint] = [
                 webView.widthAnchor.constraint(equalToConstant: size.width),
                 webView.heightAnchor.constraint(equalToConstant: size.height),
@@ -659,10 +707,10 @@ public final class UserbackSDK: NSObject {
             webViewLayoutConstraints = constraints
         } else {
             webViewLayoutConstraints = [
-                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-                webView.topAnchor.constraint(equalTo: containerView.topAnchor),
-                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+                webView.widthAnchor.constraint(equalToConstant: containerWidth),
+                webView.heightAnchor.constraint(equalToConstant: containerHeight),
+                webView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+                webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
             ]
         }
 
@@ -677,12 +725,66 @@ public final class UserbackSDK: NSObject {
         return position
     }
 
+    private func applyWebViewLayerStyle(to webView: WKWebView) {
+        let screenWidth = UIScreen.main.bounds.width
+        if screenWidth > 800 {
+            webView.layer.borderColor = UIColor(red: 224/255, green: 224/255, blue: 224/255, alpha: 1).cgColor // #e0e0e0
+            webView.layer.borderWidth = 1
+            webView.layer.cornerRadius = 0
+            webView.layer.shadowColor = UIColor.black.cgColor
+            webView.layer.shadowOpacity = 0.1
+            webView.layer.shadowOffset = CGSize(width: 0, height: 0)
+            webView.layer.shadowRadius = 10
+            webView.layer.masksToBounds = false
+            webView.scrollView.layer.cornerRadius = 0
+            webView.scrollView.clipsToBounds = false
+        } else {
+            webView.layer.borderColor = UIColor.red.cgColor
+            webView.layer.borderWidth = 2
+            webView.layer.cornerRadius = 0
+            webView.layer.shadowOpacity = 0
+            webView.layer.masksToBounds = true
+            webView.scrollView.layer.cornerRadius = 0
+            webView.scrollView.clipsToBounds = false
+        }
+    }
+
+    private func setNativeResizing(_ resizing: Bool) {
+        webView?.evaluateJavaScript("window.__nativeResizing = \(resizing);")
+    }
+
     private func applyLatestWidgetSizeToWebViewIfNeeded() {
         guard let webView, let containerView = webView.superview ?? webViewContainerView else {
             return
         }
+        applyWebViewLayerStyle(to: webView)
         applyWidgetSizeConstraints(to: webView, in: containerView)
         containerView.layoutIfNeeded()
+        applyBreakpoint(in: webView)
+        if state == .ready {
+            let containerBounds = containerView.bounds
+            let deviceWidth = Int(containerBounds.width)
+            let deviceHeight = Int(containerBounds.height)
+            sendMessageToJavaScript(
+                ["type": "native_device_size", "payload": ["deviceWidth": deviceWidth, "deviceHeight": deviceHeight]],
+                customEventName: "userback:nativeDeviceSize",
+                successLogPrefix: "Device size"
+            )
+        }
+    }
+
+    private func applyBreakpoint(in webView: WKWebView) {
+        let isTablet = UIScreen.main.bounds.width > 800
+        webView.evaluateJavaScript("""
+            var container = document.querySelector('.userback-button-container');
+            if (container) {
+                if (\(isTablet)) {
+                    container.setAttribute('data-breakpoint', 'tablet');
+                } else {
+                    container.removeAttribute('data-breakpoint');
+                }
+            }
+        """)
     }
 
     private func reloadWidget() {
@@ -1011,6 +1113,13 @@ extension UserbackSDK: WKScriptMessageHandler {
                 handleWidgetResize(body)
             case "widget_action":
                 handleWidgetAction(body)
+            case "load_error":
+                let message = (body["payload"] as? [String: Any])?["message"] as? String ?? "Unknown error"
+                log("JS SDK load error: \(message). Closing WebView.")
+                close()
+            case "hcaptcha_required":
+                let message = (body["payload"] as? [String: Any])?["message"] as? String ?? "hCaptcha required"
+                log("JS SDK hCaptcha required: \(message). Closing WebView.")
             case "close":
                 close()
             default:
@@ -1063,8 +1172,10 @@ extension UserbackSDK: WKScriptMessageHandler {
             return
         }
 
-        let size = CGSize(width: width, height: height)
+        let size = CGSize(width: width, height: height + 20)
         latestWidgetSize = size
+        formOpenTimeoutTask?.cancel()
+        formOpenTimeoutTask = nil
         applyLatestWidgetSizeToWebViewIfNeeded()
         onWidgetResize?(size)
     }
@@ -1162,12 +1273,18 @@ extension UserbackSDK: WKScriptMessageHandler {
     private func captureActiveWindowScreenshotDataURL() -> String? {
         guard let window = activeWindow() else { return nil }
 
+        let savedOffset = webView?.scrollView.contentOffset
+
         let rendererFormat = UIGraphicsImageRendererFormat.default()
         rendererFormat.scale = UIScreen.main.scale
 
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: rendererFormat)
         let screenshot = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+
+        if let offset = savedOffset {
+            webView?.scrollView.setContentOffset(offset, animated: false)
         }
 
         guard let data = screenshot.jpegData(compressionQuality: 0.8) else {
