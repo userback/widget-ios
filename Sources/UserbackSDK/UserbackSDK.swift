@@ -379,7 +379,7 @@ public final class UserbackSDK: NSObject {
         callUserback(function: "destroy", arguments: [keepInstance, keepRecorder])
     }
 
-    public func openForm(mode: String = "general", directTo: String? = nil) {
+    public func openForm(mode: String = "", directTo: String? = nil) {
         if webView == nil {
             guard activeWindow() != nil else {
                 pendingWindowAttachment = true
@@ -414,10 +414,10 @@ public final class UserbackSDK: NSObject {
         }
 
         webView.superview?.bringSubviewToFront(webView)
-        webView.isHidden = false
-        webView.alpha = 1
+        webView.isHidden = true
+        webView.alpha = 0
         webView.transform = .identity
-        webView.isUserInteractionEnabled = true
+        webView.isUserInteractionEnabled = false
 
         formOpenTimeoutTask?.cancel()
         let task = DispatchWorkItem { [weak self] in
@@ -739,8 +739,7 @@ public final class UserbackSDK: NSObject {
             webView.scrollView.layer.cornerRadius = 0
             webView.scrollView.clipsToBounds = false
         } else {
-            webView.layer.borderColor = UIColor.red.cgColor
-            webView.layer.borderWidth = 2
+            webView.layer.borderWidth = 0
             webView.layer.cornerRadius = 0
             webView.layer.shadowOpacity = 0
             webView.layer.masksToBounds = true
@@ -947,15 +946,18 @@ public final class UserbackSDK: NSObject {
             "dpi_scale": scale
         ]
 
+        var devOverrides = ""
+        if let widgetCSS = configuration?.widgetCSS { devOverrides += "Userback.widget_css = \(jsonLiteral(widgetCSS));\n" }
+        if let surveyURL = configuration?.surveyURL { devOverrides += "Userback.survey_url = \(jsonLiteral(surveyURL));\n" }
+        if let requestURL = configuration?.requestURL { devOverrides += "Userback.request_url = \(jsonLiteral(requestURL));\n" }
+        if let trackURL = configuration?.trackURL { devOverrides += "Userback.track_url = \(jsonLiteral(trackURL));\n" }
+
         return """
         window.Userback = window.Userback || {};
         Userback.load_type = "mobile_sdk";
         Userback.access_token = \(jsonLiteral(configuration?.accessToken));
         Userback.user_data = \(jsonLiteral(configuration?.userData));
-        Userback.widget_css = \(jsonLiteral(configuration?.widgetCSS));
-        Userback.survey_url = \(jsonLiteral(configuration?.surveyURL));
-        Userback.request_url = \(jsonLiteral(configuration?.requestURL));
-        Userback.track_url = \(jsonLiteral(configuration?.trackURL));
+        \(devOverrides)
         Userback.native_env = \(jsonLiteral(nativeEnv));
         Userback.native_ua_data = \(jsonLiteral(nativeUAData()));
         """
@@ -1113,6 +1115,9 @@ extension UserbackSDK: WKScriptMessageHandler {
                 handleWidgetResize(body)
             case "widget_action":
                 handleWidgetAction(body)
+            case "open_feedback_view":
+                latestWidgetSize = nil
+                applyLatestWidgetSizeToWebViewIfNeeded()
             case "load_error":
                 let message = (body["payload"] as? [String: Any])?["message"] as? String ?? "Unknown error"
                 log("JS SDK load error: \(message). Closing WebView.")
@@ -1173,10 +1178,16 @@ extension UserbackSDK: WKScriptMessageHandler {
         }
 
         let size = CGSize(width: width, height: height + 20)
+        let isLast = payload["last"] as? Bool == true
         latestWidgetSize = size
         formOpenTimeoutTask?.cancel()
         formOpenTimeoutTask = nil
         applyLatestWidgetSizeToWebViewIfNeeded()
+        if isLast {
+            webView?.isHidden = false
+            webView?.alpha = 1
+            webView?.isUserInteractionEnabled = true
+        }
         onWidgetResize?(size)
     }
 
