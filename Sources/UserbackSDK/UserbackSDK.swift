@@ -728,8 +728,7 @@ public final class UserbackSDK: NSObject {
     private func applyWebViewLayerStyle(to webView: WKWebView) {
         let screenWidth = UIScreen.main.bounds.width
         if screenWidth > 800 {
-            webView.layer.borderColor = UIColor(red: 224/255, green: 224/255, blue: 224/255, alpha: 1).cgColor // #e0e0e0
-            webView.layer.borderWidth = 1
+            webView.layer.borderWidth = 0
             webView.layer.cornerRadius = 0
             webView.layer.shadowColor = UIColor.black.cgColor
             webView.layer.shadowOpacity = 0.1
