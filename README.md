@@ -5,6 +5,12 @@ Integrating Userback widget into your iOS application.
 
 This repository contains `UserbackSDK`, an iOS SDK provided as a Swift Package.
 
+## Requirements
+
+- iOS 13.0+
+- Swift 5.5+
+- Xcode 13+
+
 ## Installation
 
 ### Swift Package Manager
@@ -126,6 +132,17 @@ UserbackSDK.shared.refresh()
 ```
 
 ---
+
+## Example App
+
+A working example app is included in `Examples/UserbackSDKExample/`.
+
+To run it:
+
+1. Open `Examples/UserbackSDKExample/UserbackSDKExample.xcodeproj` in Xcode
+2. Open `UserbackSDKExample/Info.plist`
+3. Replace `YOUR_ACCESS_TOKEN` with your Userback access token
+4. Build and run on a simulator or device
 
 ## Run Tests
 
