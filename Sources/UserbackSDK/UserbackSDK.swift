@@ -916,7 +916,7 @@ public final class UserbackSDK: NSObject {
         return [
             "platform": "ios",
             "platformVersion": device.systemVersion,
-            "model": device.model,
+            "model": deviceModelIdentifier(),
             "sdkVersion": Self.sdkVersion
         ]
     }
@@ -936,7 +936,7 @@ public final class UserbackSDK: NSObject {
             "sdk_version": Self.sdkVersion,
             "app_version": fullAppVersion,
             "os_version": device.systemVersion,
-            "device_model": device.model,
+            "device_model": deviceModelIdentifier(),
             "device_name": device.name,
             "resolution_x": Int(screen.width * scale),
             "resolution_y": Int(screen.height * scale),
@@ -960,6 +960,74 @@ public final class UserbackSDK: NSObject {
         Userback.native_env = \(jsonLiteral(nativeEnv));
         Userback.native_ua_data = \(jsonLiteral(nativeUAData()));
         """
+    }
+
+    private func deviceModelIdentifier() -> String {
+        #if targetEnvironment(simulator)
+        let identifier = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? "Simulator"
+        #else
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let identifier = withUnsafeBytes(of: &systemInfo.machine) { buffer in
+            buffer.compactMap { $0 == 0 ? nil : String(UnicodeScalar($0)) }.joined()
+        }
+        #endif
+        let modelMap: [String: String] = [
+            // iPhone
+            "iPhone12,1": "iPhone 11",
+            "iPhone12,3": "iPhone 11 Pro",
+            "iPhone12,5": "iPhone 11 Pro Max",
+            "iPhone13,1": "iPhone 12 mini",
+            "iPhone13,2": "iPhone 12",
+            "iPhone13,3": "iPhone 12 Pro",
+            "iPhone13,4": "iPhone 12 Pro Max",
+            "iPhone14,4": "iPhone 13 mini",
+            "iPhone14,5": "iPhone 13",
+            "iPhone14,2": "iPhone 13 Pro",
+            "iPhone14,3": "iPhone 13 Pro Max",
+            "iPhone14,7": "iPhone 14",
+            "iPhone14,8": "iPhone 14 Plus",
+            "iPhone15,2": "iPhone 14 Pro",
+            "iPhone15,3": "iPhone 14 Pro Max",
+            "iPhone15,4": "iPhone 15",
+            "iPhone15,5": "iPhone 15 Plus",
+            "iPhone16,1": "iPhone 15 Pro",
+            "iPhone16,2": "iPhone 15 Pro Max",
+            "iPhone17,3": "iPhone 16",
+            "iPhone17,4": "iPhone 16 Plus",
+            "iPhone17,1": "iPhone 16 Pro",
+            "iPhone17,2": "iPhone 16 Pro Max",
+            // iPad
+            "iPad13,18": "iPad (10th generation)",
+            "iPad13,19": "iPad (10th generation)",
+            "iPad14,1":  "iPad mini (6th generation)",
+            "iPad14,2":  "iPad mini (6th generation)",
+            "iPad13,4":  "iPad Pro 11\" (3rd generation)",
+            "iPad13,5":  "iPad Pro 11\" (3rd generation)",
+            "iPad13,6":  "iPad Pro 11\" (3rd generation)",
+            "iPad13,7":  "iPad Pro 11\" (3rd generation)",
+            "iPad13,8":  "iPad Pro 12.9\" (5th generation)",
+            "iPad13,9":  "iPad Pro 12.9\" (5th generation)",
+            "iPad13,10": "iPad Pro 12.9\" (5th generation)",
+            "iPad13,11": "iPad Pro 12.9\" (5th generation)",
+            "iPad14,3":  "iPad Pro 11\" (4th generation)",
+            "iPad14,4":  "iPad Pro 11\" (4th generation)",
+            "iPad14,5":  "iPad Pro 12.9\" (6th generation)",
+            "iPad14,6":  "iPad Pro 12.9\" (6th generation)",
+            "iPad16,3":  "iPad Pro 11\" (M4)",
+            "iPad16,4":  "iPad Pro 11\" (M4)",
+            "iPad16,5":  "iPad Pro 13\" (M4)",
+            "iPad16,6":  "iPad Pro 13\" (M4)",
+            "iPad13,1":  "iPad Air (4th generation)",
+            "iPad13,2":  "iPad Air (4th generation)",
+            "iPad13,16": "iPad Air (5th generation)",
+            "iPad13,17": "iPad Air (5th generation)",
+            "iPad14,8":  "iPad Air 11\" (M2)",
+            "iPad14,9":  "iPad Air 11\" (M2)",
+            "iPad14,10": "iPad Air 13\" (M2)",
+            "iPad14,11": "iPad Air 13\" (M2)",
+        ]
+        return modelMap[identifier] ?? identifier
     }
 
     private func jsonLiteral(_ value: Any?) -> String {
@@ -1264,7 +1332,7 @@ extension UserbackSDK: WKScriptMessageHandler {
     }
 
     private func helpURL() -> URL? {
-        guard let raw = latestWidgetConfig?["help_url"] as? String,
+        guard let raw = latestWidgetConfig?["help_link"] as? String,
               !raw.isEmpty else {
             return portalURL()
         }
@@ -1285,13 +1353,17 @@ extension UserbackSDK: WKScriptMessageHandler {
 
         let savedOffset = webView?.scrollView.contentOffset
 
+        webView?.isHidden = true
+
         let rendererFormat = UIGraphicsImageRendererFormat.default()
         rendererFormat.scale = UIScreen.main.scale
 
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: rendererFormat)
         let screenshot = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
+
+        webView?.isHidden = false
 
         if let offset = savedOffset {
             webView?.scrollView.setContentOffset(offset, animated: false)
