@@ -191,6 +191,12 @@ private struct EndpointTestScreen: View {
             }
 
             Section("Lifecycle") {
+                Button("Init") {
+                    let token = (Bundle.main.object(forInfoDictionaryKey: "USERBACK_ACCESS_TOKEN") as? String) ?? ""
+                    UserbackSDK.shared.start(accessToken: token)
+                    endpointStatus = "Called start()"
+                }
+
                 Button("Check isLoaded") {
                     UserbackSDK.shared.isLoaded { loaded in
                         endpointStatus = "isLoaded: \(loaded)"
@@ -202,9 +208,9 @@ private struct EndpointTestScreen: View {
                     endpointStatus = "Called refresh()"
                 }
 
-                Button("Destroy (keep instance + recorder)") {
-                    UserbackSDK.shared.destroy(keepInstance: false, keepRecorder: false)
-                    endpointStatus = "Called destroy(keepInstance: false, keepRecorder: false)"
+                Button("Destroy") {
+                    UserbackSDK.shared.stop()
+                    endpointStatus = "Called stop()"
                 }
             }
 
