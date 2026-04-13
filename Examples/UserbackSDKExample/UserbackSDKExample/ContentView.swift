@@ -197,16 +197,6 @@ private struct EndpointTestScreen: View {
                     }
                 }
 
-                Button("Init Widget") {
-                    UserbackSDK.shared.initWidget()
-                    endpointStatus = "Called initWidget()"
-                }
-
-                Button("Start Widget") {
-                    UserbackSDK.shared.startWidget()
-                    endpointStatus = "Called startWidget()"
-                }
-
                 Button("Refresh") {
                     UserbackSDK.shared.refresh(refreshFeedback: true, refreshSurvey: true)
                     endpointStatus = "Called refresh()"
