@@ -360,17 +360,6 @@ public final class UserbackSDK: NSObject {
         }
     }
 
-    public func initWidget(options: [String: Any] = [:]) {
-        guard let config = configuration else { return }
-        let token = jsValueLiteral(config.accessToken)
-        let optionsLiteral = jsValueLiteral(options)
-        evaluateJavaScript("window.Userback && typeof window.Userback.init === 'function' && window.Userback.init(\(token), \(optionsLiteral));")
-    }
-
-    public func startWidget() {
-        callUserback(function: "start")
-    }
-
     public func refresh(refreshFeedback: Bool = true, refreshSurvey: Bool = true) {
         callUserback(function: "refresh", arguments: [refreshFeedback, refreshSurvey])
     }
