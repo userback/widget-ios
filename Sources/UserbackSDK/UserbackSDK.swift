@@ -85,6 +85,32 @@ public final class UserbackSDK: NSObject {
     private var webViewLayoutConstraints: [NSLayoutConstraint] = []
     private weak var webViewContainerView: UIView?
 
+    // Survey state
+    private struct SurveyLayoutConfig {
+        let format: String
+        let position: String
+        let size: String
+        let hasOverlay: Bool
+    }
+
+    private var surveyConfigs: [String: SurveyLayoutConfig] = [:]
+    private var currentSurveyInfo: (config: SurveyLayoutConfig, height: CGFloat)? = nil
+
+    private let surveySizeWidths: [String: CGFloat] = [
+        "smaller": 352, "smaller-wide": 448,
+        "small": 448,   "small-wide": 544,
+        "medium": 544,  "medium-wide": 640,
+        "large": 640,   "large-wide": 736,
+        "larger": 736,  "larger-wide": 832,
+        "largest": 1120,
+    ]
+    private let surveySpace: CGFloat = 24
+
+    private var isWidgetOpen: Bool {
+        guard let webView else { return false }
+        return !webView.isHidden && webView.alpha > 0
+    }
+
     public var onWidgetConfigLoaded: (([String: Any]) -> Void)?
     public var onWidgetResize: ((CGSize) -> Void)?
 
@@ -374,11 +400,10 @@ public final class UserbackSDK: NSObject {
         callUserback(function: "destroy", arguments: [keepInstance, keepRecorder])
     }
 
-    public func openForm(mode: String = "", directTo: String? = nil) {
+    public func openForm(mode: String = "", directTo: String? = nil, projectKey: String? = nil) {
         if directTo?.lowercased() == "screenshot" && !isWidgetOpen {
             pendingScreenshotDataURL = captureActiveWindowScreenshotDataURL()
         }
-
         if webView == nil {
             guard activeWindow() != nil else {
                 pendingWindowAttachment = true
@@ -516,6 +541,16 @@ public final class UserbackSDK: NSObject {
 
     public func addCustomEvent(_ title: String, details: [String: Any]? = nil) {
         callUserback(function: "addCustomEvent", arguments: [title, details])
+    }
+
+    public func enterScreen(_ screenName: String) {
+        let js = "(function(){window.dispatchEvent(new CustomEvent('userback:nativeScreen',{detail:{screenName:\(jsValueLiteral(screenName)),action:'enter'}}));})();"
+        evaluateJavaScript(js)
+    }
+
+    public func leaveScreen(_ screenName: String) {
+        let js = "(function(){window.dispatchEvent(new CustomEvent('userback:nativeScreen',{detail:{screenName:\(jsValueLiteral(screenName)),action:'leave'}}));})();"
+        evaluateJavaScript(js)
     }
 
     public func identify(userID: Any, userInfo: [String: Any]? = nil) {
@@ -710,10 +745,10 @@ public final class UserbackSDK: NSObject {
             webViewLayoutConstraints = constraints
         } else {
             webViewLayoutConstraints = [
-                webView.widthAnchor.constraint(equalToConstant: containerWidth),
-                webView.heightAnchor.constraint(equalToConstant: containerHeight),
-                webView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
-                webView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
+                webView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
+                webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
             ]
         }
 
@@ -1178,9 +1213,11 @@ extension UserbackSDK: WKScriptMessageHandler {
                     log("Received 'load' message without config payload.")
                     return
                 }
-                latestWidgetConfig = payload
+                let feedbackConfig = (payload["feedback"] as? [String: Any]) ?? payload
+                latestWidgetConfig = feedbackConfig
+                log("Widget config loaded: \(feedbackConfig)")
                 applyLatestWidgetSizeToWebViewIfNeeded()
-                onWidgetConfigLoaded?(payload)
+                onWidgetConfigLoaded?(feedbackConfig)
             case "widget_resize":
                 handleWidgetResize(body)
             case "widget_action":
@@ -1197,6 +1234,40 @@ extension UserbackSDK: WKScriptMessageHandler {
                 log("JS SDK hCaptcha required: \(message). Closing WebView.")
             case "close":
                 close()
+            case "survey_configs":
+                if let configs = body["payload"] as? [[String: Any]] {
+                    var map: [String: SurveyLayoutConfig] = [:]
+                    for cfg in configs {
+                        guard let key = cfg["key"] as? String else { continue }
+                        map[key] = SurveyLayoutConfig(
+                            format: cfg["format"] as? String ?? "",
+                            position: cfg["position"] as? String ?? "center",
+                            size: cfg["size"] as? String ?? "large",
+                            hasOverlay: cfg["has_background_colour"] as? Bool ?? false
+                        )
+                    }
+                    surveyConfigs = map
+                    log("Loaded \(map.count) survey config(s).")
+                }
+            case "survey_open":
+                guard !isWidgetOpen else { break }
+                let surveyPayload = body["payload"] as? [String: Any] ?? [:]
+                let key = surveyPayload["key"] as? String ?? ""
+                let cfg = surveyConfigs[key] ?? SurveyLayoutConfig(format: "", position: "center", size: "large", hasOverlay: false)
+                currentSurveyInfo = (config: cfg, height: 0)
+                showWebViewForSurvey()
+            case "survey_close":
+                currentSurveyInfo = nil
+                hideSurveyWebView()
+            case "survey_height":
+                if let surveyPayload = body["payload"] as? [String: Any],
+                   let rawHeight = (surveyPayload["height"] as? NSNumber)?.doubleValue
+                       ?? surveyPayload["height"] as? Double
+                       ?? (surveyPayload["height"] as? Int).map(Double.init),
+                   rawHeight > 0 {
+                    currentSurveyInfo?.height = CGFloat(rawHeight) + 40
+                    applyCurrentSurveyConstraints()
+                }
             default:
                 break
         }
@@ -1264,6 +1335,109 @@ extension UserbackSDK: WKScriptMessageHandler {
             }
         }
         onWidgetResize?(size)
+    }
+
+    private func showWebViewForSurvey() {
+        guard let webView, let container = webView.superview else { return }
+        webView.isHidden = false
+        webView.alpha = 1
+        webView.isUserInteractionEnabled = true
+        container.bringSubviewToFront(webView)
+        applyCurrentSurveyConstraints()
+    }
+
+    private func hideSurveyWebView() {
+        guard !isWidgetOpen else { return }
+        webView?.isHidden = true
+        webView?.alpha = 0
+        webView?.isUserInteractionEnabled = false
+    }
+
+    private func applyCurrentSurveyConstraints() {
+        guard let info = currentSurveyInfo,
+              let webView,
+              let container = webView.superview else { return }
+
+        NSLayoutConstraint.deactivate(webViewLayoutConstraints)
+        webViewLayoutConstraints.removeAll()
+
+        let screenWidth = container.bounds.width
+        let screenHeight = container.bounds.height
+        let cfg = info.config
+        let height = info.height > 0 ? info.height : screenHeight
+
+        if cfg.hasOverlay {
+            webViewLayoutConstraints = [
+                webView.topAnchor.constraint(equalTo: container.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            ]
+            NSLayoutConstraint.activate(webViewLayoutConstraints)
+            return
+        }
+
+        let rawWidth = surveySizeWidths[cfg.size] ?? 640
+        let width = min(rawWidth, screenWidth - surveySpace * 2)
+        let centerX = (screenWidth - width) / 2
+
+        if cfg.format == "pageless" {
+            webViewLayoutConstraints = [
+                webView.topAnchor.constraint(equalTo: container.topAnchor),
+                webView.heightAnchor.constraint(equalTo: container.heightAnchor),
+                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: centerX),
+                webView.widthAnchor.constraint(equalToConstant: width),
+            ]
+            NSLayoutConstraint.activate(webViewLayoutConstraints)
+            return
+        }
+
+        let centerY = (screenHeight - height) / 2
+        var topOffset: CGFloat? = nil
+        var bottomOffset: CGFloat? = nil
+        var leadingOffset: CGFloat? = nil
+        var trailingOffset: CGFloat? = nil
+
+        switch cfg.position {
+        case "top":          topOffset = surveySpace;    leadingOffset = centerX
+        case "top_left":     topOffset = surveySpace;    leadingOffset = surveySpace
+        case "top_right":    topOffset = surveySpace;    trailingOffset = surveySpace
+        case "bottom":       bottomOffset = surveySpace; leadingOffset = centerX
+        case "bottom_left":  bottomOffset = surveySpace; leadingOffset = surveySpace
+        case "bottom_right": bottomOffset = surveySpace; trailingOffset = surveySpace
+        case "left":         topOffset = centerY;        leadingOffset = surveySpace
+        case "right":        topOffset = centerY;        trailingOffset = surveySpace
+        case "center":       topOffset = centerY;        leadingOffset = centerX
+        default:
+            webViewLayoutConstraints = [
+                webView.topAnchor.constraint(equalTo: container.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            ]
+            NSLayoutConstraint.activate(webViewLayoutConstraints)
+            return
+        }
+
+        var constraints: [NSLayoutConstraint] = [
+            webView.widthAnchor.constraint(equalToConstant: width),
+            webView.heightAnchor.constraint(equalToConstant: height),
+        ]
+        if let top = topOffset {
+            constraints.append(webView.topAnchor.constraint(equalTo: container.topAnchor, constant: top))
+        }
+        if let bottom = bottomOffset {
+            constraints.append(webView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -bottom))
+        }
+        if let leading = leadingOffset {
+            constraints.append(webView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: leading))
+        }
+        if let trailing = trailingOffset {
+            constraints.append(webView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -trailing))
+        }
+        webViewLayoutConstraints = constraints
+        NSLayoutConstraint.activate(webViewLayoutConstraints)
+        container.layoutIfNeeded()
     }
 
     private func openPortal(forcedTarget target: String?) {

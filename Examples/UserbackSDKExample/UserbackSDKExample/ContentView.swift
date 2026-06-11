@@ -9,22 +9,30 @@ import SwiftUI
 import UserbackSDK
 
 struct ContentView: View {
+    @State private var selectedTab: String = "Home"
+
+    private let tabScreenNames = ["Home": "HomeScreen", "Shop": "ShopScreen", "Profile": "ProfileScreen"]
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             HomeScreen()
-                .tabItem {
-                    Label("Home", systemImage: "house")
-                }
+                .tabItem { Label("Home", systemImage: "house") }
+                .tag("Home")
 
             ShopScreen()
-                .tabItem {
-                    Label("Shop", systemImage: "cart")
-                }
+                .tabItem { Label("Shop", systemImage: "cart") }
+                .tag("Shop")
 
             ProfileScreen()
-                .tabItem {
-                    Label("Profile", systemImage: "person")
-                }
+                .tabItem { Label("Profile", systemImage: "person") }
+                .tag("Profile")
+        }
+        .onAppear {
+            UserbackSDK.shared.enterScreen(tabScreenNames[selectedTab] ?? selectedTab)
+        }
+        .onChange(of: selectedTab) { oldTab, newTab in
+            UserbackSDK.shared.leaveScreen(tabScreenNames[oldTab] ?? oldTab)
+            UserbackSDK.shared.enterScreen(tabScreenNames[newTab] ?? newTab)
         }
     }
 }
@@ -102,7 +110,7 @@ private struct ShopScreen: View {
                     .font(.largeTitle)
 
                 Button("Checkout Feedback") {
-                    UserbackSDK.shared.openForm(mode: "checkout")
+                    UserbackSDK.shared.openForm(projectKey: "P-AFxHENZNJLDmezgXBGa0d0iNQ")
                 }
                 .buttonStyle(.bordered)
 
@@ -142,26 +150,27 @@ private struct ProfileScreen: View {
 
                 Section("Support") {
                     Button {
-                        UserbackSDK.shared.openForm()
+                        UserbackSDK.shared.openForm(projectKey: "P-AFxHENZNJLDmezgXBGa0d0iNQ")
                     } label: {
-                        Label("Open Form", systemImage: "bubble.left.and.bubble.right")
-                    }
-                    Button {
-                        UserbackSDK.shared.openForm(mode: "general", directTo: "screenshot")
-                    } label: {
-                        Label("Send Feedback", systemImage: "bubble.left.and.bubble.right")
+                        Label("Project 1 Feedback", systemImage: "bubble.left.and.bubble.right")
                     }
 
                     Button {
-                        UserbackSDK.shared.openForm(mode: "bug")
+                        UserbackSDK.shared.openForm(projectKey: "P-BtAPoz92DjB0IoDPk0M4OoLQQ")
                     } label: {
-                        Label("Report a Bug", systemImage: "ant")
+                        Label("Project 2 Feedback", systemImage: "bubble.left.and.bubble.right")
                     }
 
                     Button {
-                        UserbackSDK.shared.openForm(mode: "feature")
+                        UserbackSDK.shared.openForm(projectKey: "P-7UYiaU5pbNve7ltmqVxdg8kx7")
                     } label: {
-                        Label("Request a Feature", systemImage: "lightbulb")
+                        Label("Project 3 Feedback", systemImage: "bubble.left.and.bubble.right")
+                    }
+
+                    Button {
+                        UserbackSDK.shared.openSurvey("9b3JMC")
+                    } label: {
+                        Label("Open Survey", systemImage: "list.bullet.clipboard")
                     }
                 }
 
@@ -215,9 +224,19 @@ private struct EndpointTestScreen: View {
             }
 
             Section("Open / Close") {
-                Button("Open Form (general)") {
-                    UserbackSDK.shared.openForm(mode: "general")
-                    endpointStatus = "Called openForm(general)"
+                Button("Open Form – Project 1") {
+                    UserbackSDK.shared.openForm(projectKey: "P-AFxHENZNJLDmezgXBGa0d0iNQ")
+                    endpointStatus = "Called openForm(P-AFxHENZNJLDmezgXBGa0d0iNQ)"
+                }
+
+                Button("Open Form – Project 2") {
+                    UserbackSDK.shared.openForm(projectKey: "P-BtAPoz92DjB0IoDPk0M4OoLQQ")
+                    endpointStatus = "Called openForm(P-BtAPoz92DjB0IoDPk0M4OoLQQ)"
+                }
+
+                Button("Open Form – Project 3") {
+                    UserbackSDK.shared.openForm(projectKey: "P-7UYiaU5pbNve7ltmqVxdg8kx7")
+                    endpointStatus = "Called openForm(P-7UYiaU5pbNve7ltmqVxdg8kx7)"
                 }
 
                 Button("Open Portal") {

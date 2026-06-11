@@ -41,16 +41,16 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>USERBACK_ACCESS_TOKEN</key>
-	<string>YOUR_ACCESS_TOKEN</string>
+	<string>M-gAheX7IieKIEqZrgxax5OFe45L8bAQ</string>
 	<key>USERBACK_WIDGET_CSS_URL</key>
-	<string></string>
+	<string>https://app.userback.ngrok.dev/dist/widget_dev/widget.min.css</string>
 	<key>USERBACK_SURVEY_URL</key>
-	<string></string>
+	<string>https://app.userback.ngrok.dev/s</string>
 	<key>USERBACK_REQUEST_URL</key>
-	<string></string>
+	<string>https://api.userback.ngrok.dev</string>
 	<key>USERBACK_TRACK_URL</key>
-	<string></string>
+	<string>https://events.userback.ngrok.dev</string>
 	<key>USERBACK_WIDGET_JS_URL</key>
-	<string></string>
+	<string>https://app.userback.ngrok.dev/dist/widget_dev/widget.min.js?12345</string>
 </dict>
 </plist>
