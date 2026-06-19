@@ -427,7 +427,7 @@ public final class UserbackSDK: NSObject {
             // directive to the widget — it would route v1 to the overview step instead of
             // opening the form directly. Native sends the pre-captured screenshot via widget_resize.
             let widgetDirectTo: String? = directTo?.lowercased() == "screenshot" ? nil : directTo
-            callUserback(function: "openForm", arguments: [mode, widgetDirectTo])
+            callUserback(function: "openForm", arguments: [mode, widgetDirectTo, projectKey])
         }
 
         guard let webView, let window = activeWindow() else { return }
@@ -1367,11 +1367,12 @@ extension UserbackSDK: WKScriptMessageHandler {
         let height = info.height > 0 ? info.height : screenHeight
 
         if cfg.hasOverlay {
+            let fullscreenAnchor: UIView = webView.window ?? container
             webViewLayoutConstraints = [
-                webView.topAnchor.constraint(equalTo: container.topAnchor),
-                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                webView.topAnchor.constraint(equalTo: fullscreenAnchor.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: fullscreenAnchor.bottomAnchor),
+                webView.leadingAnchor.constraint(equalTo: fullscreenAnchor.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: fullscreenAnchor.trailingAnchor),
             ]
             NSLayoutConstraint.activate(webViewLayoutConstraints)
             return
