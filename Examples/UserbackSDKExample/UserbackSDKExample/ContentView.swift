@@ -150,19 +150,19 @@ private struct ProfileScreen: View {
 
                 Section("Support") {
                     Button {
-                        UserbackSDK.shared.openForm(projectKey: "FR")
+                        UserbackSDK.shared.openForm(projectKey: "Your Project Key 1")
                     } label: {
                         Label("Project 1 Feedback", systemImage: "bubble.left.and.bubble.right")
                     }
 
                     Button {
-                        UserbackSDK.shared.openForm(projectKey: "PROJ2")
+                        UserbackSDK.shared.openForm(projectKey: "Your Project Key 2")
                     } label: {
                         Label("Project 2 Feedback", systemImage: "bubble.left.and.bubble.right")
                     }
 
                     Button {
-                        UserbackSDK.shared.openForm(projectKey: "VF")
+                        UserbackSDK.shared.openForm(projectKey: "Your Project Key 3")
                     } label: {
                         Label("Project 3 Feedback", systemImage: "bubble.left.and.bubble.right")
                     }
@@ -174,7 +174,7 @@ private struct ProfileScreen: View {
                     }
 
                     Button {
-                        UserbackSDK.shared.openSurvey("9b3JMC")
+                        UserbackSDK.shared.openSurvey("Your Survey Key")
                     } label: {
                         Label("Open Survey", systemImage: "list.bullet.clipboard")
                     }
