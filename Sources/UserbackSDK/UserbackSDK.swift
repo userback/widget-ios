@@ -1347,7 +1347,6 @@ extension UserbackSDK: WKScriptMessageHandler {
     }
 
     private func hideSurveyWebView() {
-        guard !isWidgetOpen else { return }
         webView?.isHidden = true
         webView?.alpha = 0
         webView?.isUserInteractionEnabled = false
