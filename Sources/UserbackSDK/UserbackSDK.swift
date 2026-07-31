@@ -400,7 +400,13 @@ public final class UserbackSDK: NSObject {
         callUserback(function: "destroy", arguments: [keepInstance, keepRecorder])
     }
 
-    public func openForm(mode: String = "", directTo: String? = nil, projectKey: String? = nil) {
+    public func openSurvey(_ surveyKey: String) {
+        callUserback(function: "openSurvey", arguments: [surveyKey])
+    }
+
+    public func openForm(mode: String = "", directTo: String? = nil, projectKey: String = "") {
+        guard currentSurveyInfo == nil else { return }
+
         if directTo?.lowercased() == "screenshot" && !isWidgetOpen {
             pendingScreenshotDataURL = captureActiveWindowScreenshotDataURL()
         }
