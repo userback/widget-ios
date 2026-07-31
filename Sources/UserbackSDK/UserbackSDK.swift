@@ -79,6 +79,7 @@ public final class UserbackSDK: NSObject {
     private var orientationObserver: NSObjectProtocol?
     private var pendingWindowAttachment = false
     private var formOpenTimeoutTask: DispatchWorkItem?
+    private var pendingScreenshotDataURL: String?
     private var latestWidgetConfig: [String: Any]?
     private var latestWidgetSize: CGSize?
     private var webViewLayoutConstraints: [NSLayoutConstraint] = []
@@ -172,6 +173,11 @@ public final class UserbackSDK: NSObject {
         latestWidgetSize = nil
         stopNativeObserversIfNeeded()
         removeActivationObservers()
+    }
+
+    private var isWidgetOpen: Bool {
+        guard let webView else { return false }
+        return !webView.isHidden && webView.alpha > 0
     }
 
     public func widgetConfig() -> [String: Any]? {
@@ -369,6 +375,10 @@ public final class UserbackSDK: NSObject {
     }
 
     public func openForm(mode: String = "", directTo: String? = nil) {
+        if directTo?.lowercased() == "screenshot" && !isWidgetOpen {
+            pendingScreenshotDataURL = captureActiveWindowScreenshotDataURL()
+        }
+
         if webView == nil {
             guard activeWindow() != nil else {
                 pendingWindowAttachment = true
@@ -1243,6 +1253,11 @@ extension UserbackSDK: WKScriptMessageHandler {
             webView?.isHidden = false
             webView?.alpha = 1
             webView?.isUserInteractionEnabled = true
+
+            if let dataURL = pendingScreenshotDataURL {
+                pendingScreenshotDataURL = nil
+                sendScreenshotToJavaScript(dataURL)
+            }
         }
         onWidgetResize?(size)
     }
@@ -1329,11 +1344,12 @@ extension UserbackSDK: WKScriptMessageHandler {
     }
 
     private func attachScreenshotAndSendToJS() {
-        guard let screenshotDataURL = captureActiveWindowScreenshotDataURL() else {
+        let dataURL = pendingScreenshotDataURL ?? captureActiveWindowScreenshotDataURL()
+        pendingScreenshotDataURL = nil
+        guard let screenshotDataURL = dataURL else {
             log("Failed to capture screenshot for attachScreenshot action.")
             return
         }
-
         sendScreenshotToJavaScript(screenshotDataURL)
     }
 
