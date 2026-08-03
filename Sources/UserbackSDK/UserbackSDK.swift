@@ -398,7 +398,11 @@ public final class UserbackSDK: NSObject {
         }
 
         if shouldLoadAsWidgetScript(configuration?.widgetJSURL) {
-            callUserback(function: "openForm", arguments: [mode, directTo])
+            // When native handles the screenshot (directTo == "screenshot"), don't pass the
+            // directive to the widget — it would route v1 to the overview step instead of
+            // opening the form directly. Native sends the pre-captured screenshot via widget_resize.
+            let widgetDirectTo: String? = directTo?.lowercased() == "screenshot" ? nil : directTo
+            callUserback(function: "openForm", arguments: [mode, widgetDirectTo])
         }
 
         guard let webView, let window = activeWindow() else { return }
