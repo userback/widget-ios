@@ -106,11 +106,6 @@ public final class UserbackSDK: NSObject {
     ]
     private let surveySpace: CGFloat = 24
 
-    private var isWidgetOpen: Bool {
-        guard let webView else { return false }
-        return !webView.isHidden && webView.alpha > 0
-    }
-
     public var onWidgetConfigLoaded: (([String: Any]) -> Void)?
     public var onWidgetResize: ((CGSize) -> Void)?
 
