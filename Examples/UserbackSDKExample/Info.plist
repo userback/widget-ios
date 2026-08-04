@@ -41,16 +41,16 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>USERBACK_ACCESS_TOKEN</key>
-	<string>M-RakmUvgmSu2AY0ZrsoVFRFxdrpa5T1</string>
+	<string>YOUR_ACCESS_TOKEN</string>
 	<key>USERBACK_WIDGET_CSS_URL</key>
-	<string>https://app.dev.userback.net/dist/widget_dev/widget.min.css</string>
+	<string></string>
 	<key>USERBACK_SURVEY_URL</key>
-	<string>https://app.dev.userback.net/s</string>
+	<string></string>
 	<key>USERBACK_REQUEST_URL</key>
-	<string>https://api.dev.userback.net</string>
+	<string></string>
 	<key>USERBACK_TRACK_URL</key>
-	<string>https://events.dev.userback.net</string>
+	<string></string>
 	<key>USERBACK_WIDGET_JS_URL</key>
-	<string>https://app.dev.userback.net/dist/widget_dev/widget.min.js?1234</string>
+	<string></string>
 </dict>
 </plist>
