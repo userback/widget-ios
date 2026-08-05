@@ -108,7 +108,7 @@ Find a survey's key in the Userback app under that survey's settings.
 
 ### 4. Screen tracking
 
-Call `enterScreen` when a screen becomes active and `leaveScreen` when it's dismissed, so surveys can be attributed to the correct screen:
+Call `enterScreen` when a screen becomes active and `leaveScreen` when it's dismissed, so surveys can be attributed to the correct screen. The screen name you pass must match a screen configured in the Userback app under **Survey Designer → Target → Mobile Screens** — that's how a survey gets targeted to appear only on specific screens:
 
 ```swift
 UserbackSDK.shared.enterScreen("ProductDetailScreen")
