@@ -4,7 +4,7 @@ Integrating Userback widget into your iOS application.
 ## What's new in v2
 
 - **Surveys** — `openSurvey(surveyKey:)` opens a specific survey directly.
-- **Screen tracking** — `enterScreen`/`leaveScreen` attribute feedback, surveys, and session replay to the screen the user was on.
+- **Screen tracking** — `enterScreen`/`leaveScreen` attribute surveys to the screen the user was on.
 - **Multi-project support** — `openForm` accepts an optional `projectKey` to route feedback to a specific Userback project when your app is set up with more than one.
 
 All of the above are additive. Existing v1 `openForm(mode:, directTo:)` calls keep working unchanged — no code changes required to upgrade.
@@ -108,7 +108,7 @@ Find a survey's key in the Userback app under that survey's settings.
 
 ### 4. Screen tracking
 
-Call `enterScreen` when a screen becomes active and `leaveScreen` when it's dismissed, so feedback, surveys, and session replay can be attributed to the correct screen:
+Call `enterScreen` when a screen becomes active and `leaveScreen` when it's dismissed, so surveys can be attributed to the correct screen:
 
 ```swift
 UserbackSDK.shared.enterScreen("ProductDetailScreen")
