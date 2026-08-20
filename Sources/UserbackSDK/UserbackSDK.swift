@@ -80,6 +80,8 @@ public final class UserbackSDK: NSObject {
     private var pendingWindowAttachment = false
     private var formOpenTimeoutTask: DispatchWorkItem?
     private var pendingScreenshotDataURL: String?
+    private var isCapturingScreenshot = false
+    private var shouldSendScreenshotWhenReady = false
     private var latestWidgetConfig: [String: Any]?
     private var latestWidgetSize: CGSize?
     private var webViewLayoutConstraints: [NSLayoutConstraint] = []
@@ -108,6 +110,15 @@ public final class UserbackSDK: NSObject {
 
     public var onWidgetConfigLoaded: (([String: Any]) -> Void)?
     public var onWidgetResize: ((CGSize) -> Void)?
+
+    /// Optional host-supplied screen capture, used in place of the built-in window snapshot.
+    ///
+    /// The built-in snapshot uses `drawHierarchy`, which cannot read Metal-backed layers, so
+    /// apps rendering through RealityKit or MetalKit get a black region where that content
+    /// should be. Such an app can supply its own capture here. Called on the main thread, and
+    /// expected to call the completion on the main thread; passing `nil` falls back to the
+    /// built-in snapshot.
+    public var screenshotProvider: ((@escaping (UIImage?) -> Void) -> Void)?
 
     private override init() {
         super.init()
@@ -403,7 +414,7 @@ public final class UserbackSDK: NSObject {
         guard currentSurveyInfo == nil else { return }
 
         if directTo?.lowercased() == "screenshot" && !isWidgetOpen {
-            pendingScreenshotDataURL = captureActiveWindowScreenshotDataURL()
+            beginScreenshotCapture()
         }
         if webView == nil {
             guard activeWindow() != nil else {
@@ -584,6 +595,16 @@ public final class UserbackSDK: NSObject {
         #if DEBUG
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
         #endif
+
+        // A host app that declares WKAppBoundDomains puts every WKWebView in the process into a
+        // restricted mode where user scripts and message handlers are silently denied, which
+        // leaves the widget unable to initialise. Opting in restores those APIs, and requires the
+        // widget host (static.userback.io by default) to be listed among the app-bound domains.
+        // Apps without the key must not set this, as it would deny every navigation.
+        if #available(iOS 14.0, *),
+           Bundle.main.object(forInfoDictionaryKey: "WKAppBoundDomains") != nil {
+            config.limitsNavigationsToAppBoundDomains = true
+        }
 
         let controller = WKUserContentController()
         messageHandlerProxy = WeakScriptMessageHandler(delegate: self)
@@ -1333,6 +1354,8 @@ extension UserbackSDK: WKScriptMessageHandler {
             if let dataURL = pendingScreenshotDataURL {
                 pendingScreenshotDataURL = nil
                 sendScreenshotToJavaScript(dataURL)
+            } else if isCapturingScreenshot {
+                shouldSendScreenshotWhenReady = true
             }
         }
         onWidgetResize?(size)
@@ -1523,41 +1546,95 @@ extension UserbackSDK: WKScriptMessageHandler {
     }
 
     private func attachScreenshotAndSendToJS() {
-        let dataURL = pendingScreenshotDataURL ?? captureActiveWindowScreenshotDataURL()
-        pendingScreenshotDataURL = nil
-        guard let screenshotDataURL = dataURL else {
-            log("Failed to capture screenshot for attachScreenshot action.")
+        if let dataURL = pendingScreenshotDataURL {
+            pendingScreenshotDataURL = nil
+            sendScreenshotToJavaScript(dataURL)
             return
         }
-        sendScreenshotToJavaScript(screenshotDataURL)
+
+        captureScreenshotDataURL { [weak self] dataURL in
+            guard let self else { return }
+            guard let dataURL else {
+                self.log("Failed to capture screenshot for attachScreenshot action.")
+                return
+            }
+            self.sendScreenshotToJavaScript(dataURL)
+        }
     }
 
-    private func captureActiveWindowScreenshotDataURL() -> String? {
-        guard let window = activeWindow() else { return nil }
+    /// Starts a capture ahead of the widget opening. The widget may become ready before the
+    /// capture finishes, so `isCapturingScreenshot` lets `handleWidgetResize` wait for it
+    /// rather than dropping the image.
+    private func beginScreenshotCapture() {
+        pendingScreenshotDataURL = nil
+        isCapturingScreenshot = true
 
+        captureScreenshotDataURL { [weak self] dataURL in
+            guard let self else { return }
+            self.isCapturingScreenshot = false
+
+            guard self.shouldSendScreenshotWhenReady else {
+                self.pendingScreenshotDataURL = dataURL
+                return
+            }
+
+            self.shouldSendScreenshotWhenReady = false
+            guard let dataURL else { return }
+            self.sendScreenshotToJavaScript(dataURL)
+        }
+    }
+
+    /// Captures the screen with the widget hidden, preferring `screenshotProvider` when the
+    /// host app has supplied one. Asynchronous because a host capturing Metal content has to
+    /// go through APIs that report back on a completion handler.
+    private func captureScreenshotDataURL(completion: @escaping (String?) -> Void) {
         let savedOffset = webView?.scrollView.contentOffset
-
+        // Captured so the widget's visibility is left exactly as it was found. The capture
+        // can outlive the call now that it is asynchronous, and openForm manages this flag
+        // itself while the widget loads.
+        let wasHidden = webView?.isHidden
         webView?.isHidden = true
+
+        let finish: (UIImage?) -> Void = { [weak self] image in
+            guard let self else {
+                completion(nil)
+                return
+            }
+
+            if let wasHidden {
+                self.webView?.isHidden = wasHidden
+            }
+            if let savedOffset {
+                self.webView?.scrollView.setContentOffset(savedOffset, animated: false)
+            }
+
+            guard let data = image?.jpegData(compressionQuality: 0.8) else {
+                completion(nil)
+                return
+            }
+            completion("data:image/jpeg;base64,\(data.base64EncodedString())")
+        }
+
+        guard let screenshotProvider else {
+            finish(captureActiveWindowScreenshot())
+            return
+        }
+
+        screenshotProvider { [weak self] image in
+            finish(image ?? self?.captureActiveWindowScreenshot())
+        }
+    }
+
+    private func captureActiveWindowScreenshot() -> UIImage? {
+        guard let window = activeWindow() else { return nil }
 
         let rendererFormat = UIGraphicsImageRendererFormat.default()
         rendererFormat.scale = UIScreen.main.scale
 
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: rendererFormat)
-        let screenshot = renderer.image { _ in
+        return renderer.image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
-
-        webView?.isHidden = false
-
-        if let offset = savedOffset {
-            webView?.scrollView.setContentOffset(offset, animated: false)
-        }
-
-        guard let data = screenshot.jpegData(compressionQuality: 0.8) else {
-            return nil
-        }
-
-        return "data:image/jpeg;base64,\(data.base64EncodedString())"
     }
 
     private func sendScreenshotToJavaScript(_ dataURL: String) {
