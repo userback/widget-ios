@@ -78,6 +78,7 @@ public final class UserbackSDK: NSObject {
     private var systemWarningObservers: [NSObjectProtocol] = []
     private var orientationObserver: NSObjectProtocol?
     private var pendingWindowAttachment = false
+    private var hasLoadedWidgetPage = false
     private var formOpenTimeoutTask: DispatchWorkItem?
     private var pendingScreenshotDataURL: String?
     private var isCapturingScreenshot = false
@@ -201,6 +202,7 @@ public final class UserbackSDK: NSObject {
         webView?.removeFromSuperview()
         webView = nil
         pendingWindowAttachment = false
+        hasLoadedWidgetPage = false
         latestWidgetConfig = nil
         latestWidgetSize = nil
         stopNativeObserversIfNeeded()
@@ -306,6 +308,9 @@ public final class UserbackSDK: NSObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let orientation = UIDevice.current.orientation
+                // Keyboard show/hide posts this with `.unknown` (rawValue 5). Forwarding
+                // that as a rotate makes the widget dismiss the form it just opened.
+                guard orientation.isValidInterfaceOrientation else { return }
                 let screenWidth = Int(UIScreen.main.bounds.width)
                 let screenHeight = Int(UIScreen.main.bounds.height)
                 self.log("Device orientation changed: \(orientation.rawValue), screenWidth: \(screenWidth)")
@@ -413,9 +418,21 @@ public final class UserbackSDK: NSObject {
     public func openForm(mode: String = "", directTo: String? = nil, projectKey: String = "") {
         guard currentSurveyInfo == nil else { return }
 
+        // Capture first, then tell JS to open. Running them together means the first
+        // `drawHierarchy` (slow, and it waits for screen updates) lands on the same
+        // frames as the widget's opening animation, which makes the form appear and
+        // then get torn down. Later opens are fast enough that the race usually misses.
         if directTo?.lowercased() == "screenshot" && !isWidgetOpen {
-            beginScreenshotCapture()
+            beginScreenshotCapture { [weak self] in
+                self?.performOpenForm(mode: mode, directTo: directTo, projectKey: projectKey)
+            }
+            return
         }
+
+        performOpenForm(mode: mode, directTo: directTo, projectKey: projectKey)
+    }
+
+    private func performOpenForm(mode: String, directTo: String?, projectKey: String) {
         if webView == nil {
             guard activeWindow() != nil else {
                 pendingWindowAttachment = true
@@ -466,7 +483,7 @@ public final class UserbackSDK: NSObject {
             self.close()
         }
         formOpenTimeoutTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: task)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: task)
     }
 
     public func openPortal() {
@@ -621,6 +638,7 @@ public final class UserbackSDK: NSObject {
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        hasLoadedWidgetPage = false
         webView.navigationDelegate = self
         applyWebViewLayerStyle(to: webView)
         webView.alpha = 0
@@ -647,7 +665,8 @@ public final class UserbackSDK: NSObject {
         let containerView = presentationContainerView(for: window)
 
         let configuredURLString = configuration?.widgetJSURL ?? defaultWidgetJSURL
-        if shouldLoadAsWidgetScript(configuredURLString) {
+        if !hasLoadedWidgetPage {
+            if shouldLoadAsWidgetScript(configuredURLString) {
                 let html = """
                 <html>
                     <head>
@@ -669,8 +688,10 @@ public final class UserbackSDK: NSObject {
                 """
                 let baseURL = URL(string: configuredURLString).flatMap { URL(string: "\($0.scheme ?? "https")://\($0.host ?? "")") }
                 webView.loadHTMLString(html, baseURL: baseURL)
-        } else if let url = URL(string: configuredURLString) {
+            } else if let url = URL(string: configuredURLString) {
                 webView.load(URLRequest(url: url))
+            }
+            hasLoadedWidgetPage = true
         }
 
         if webView.superview !== containerView {
@@ -1179,21 +1200,30 @@ public final class UserbackSDK: NSObject {
     }
 
     private func activeWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
+        let scenes = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive })?
-            .windows
-            .first(where: { $0.isKeyWindow })
-        ?? UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive })?
-            .windows
-            .first(where: { !$0.isHidden })
-        ?? UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?
-            .windows
-            .first
+        let preferred = scenes.filter {
+            $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive
+        }
+        let search = preferred.isEmpty ? scenes : preferred
+
+        for scene in search {
+            let windows = scene.windows.filter(isHostAppWindow)
+            if let key = windows.first(where: { $0.isKeyWindow }) { return key }
+            if let visible = windows.first(where: { !$0.isHidden }) { return visible }
+        }
+        return search.flatMap(\.windows).first(where: isHostAppWindow)
+    }
+
+    /// Keyboard and text-effects windows steal `isKeyWindow` while they animate. Parenting
+    /// the widget there makes it appear, then vanish with the keyboard.
+    private func isHostAppWindow(_ window: UIWindow) -> Bool {
+        guard window.windowLevel == .normal else { return false }
+        let typeName = String(describing: type(of: window))
+        if typeName.contains("Keyboard") || typeName.contains("TextEffects") {
+            return false
+        }
+        return true
     }
 
     private func log(_ message: String) {
@@ -1552,54 +1582,14 @@ extension UserbackSDK: WKScriptMessageHandler {
             return
         }
 
-        captureScreenshotDataURL { [weak self] dataURL in
-            guard let self else { return }
-            guard let dataURL else {
-                self.log("Failed to capture screenshot for attachScreenshot action.")
-                return
-            }
-            self.sendScreenshotToJavaScript(dataURL)
-        }
-    }
-
-    /// Starts a capture ahead of the widget opening. The widget may become ready before the
-    /// capture finishes, so `isCapturingScreenshot` lets `handleWidgetResize` wait for it
-    /// rather than dropping the image.
-    private func beginScreenshotCapture() {
-        pendingScreenshotDataURL = nil
-        isCapturingScreenshot = true
-
-        captureScreenshotDataURL { [weak self] dataURL in
-            guard let self else { return }
-            self.isCapturingScreenshot = false
-
-            guard self.shouldSendScreenshotWhenReady else {
-                self.pendingScreenshotDataURL = dataURL
-                return
-            }
-
-            self.shouldSendScreenshotWhenReady = false
-            guard let dataURL else { return }
-            self.sendScreenshotToJavaScript(dataURL)
-        }
-    }
-
-    /// Captures the screen with the widget hidden, preferring `screenshotProvider` when the
-    /// host app has supplied one. Asynchronous because a host capturing Metal content has to
-    /// go through APIs that report back on a completion handler.
-    private func captureScreenshotDataURL(completion: @escaping (String?) -> Void) {
-        let savedOffset = webView?.scrollView.contentOffset
-        // Captured so the widget's visibility is left exactly as it was found. The capture
-        // can outlive the call now that it is asynchronous, and openForm manages this flag
-        // itself while the widget loads.
+        // The widget is on screen here, so it has to be taken out of the shot and put back
+        // exactly as it was found.
         let wasHidden = webView?.isHidden
+        let savedOffset = webView?.scrollView.contentOffset
         webView?.isHidden = true
 
-        let finish: (UIImage?) -> Void = { [weak self] image in
-            guard let self else {
-                completion(nil)
-                return
-            }
+        captureScreenshotDataURL { [weak self] dataURL in
+            guard let self else { return }
 
             if let wasHidden {
                 self.webView?.isHidden = wasHidden
@@ -1608,6 +1598,42 @@ extension UserbackSDK: WKScriptMessageHandler {
                 self.webView?.scrollView.setContentOffset(savedOffset, animated: false)
             }
 
+            guard let dataURL else {
+                self.log("Failed to capture screenshot for attachScreenshot action.")
+                return
+            }
+            self.sendScreenshotToJavaScript(dataURL)
+        }
+    }
+
+    /// Starts a capture ahead of the widget opening. The widget is opened only after this
+    /// completes, so the slow first snapshot cannot race with the form's opening animation.
+    private func beginScreenshotCapture(completion: @escaping () -> Void) {
+        pendingScreenshotDataURL = nil
+        isCapturingScreenshot = true
+        shouldSendScreenshotWhenReady = false
+
+        // Only reached while the widget is closed, so it is already off screen and its
+        // visibility must be left for openForm to manage.
+        webView?.isHidden = true
+
+        captureScreenshotDataURL { [weak self] dataURL in
+            guard let self else { return }
+            self.isCapturingScreenshot = false
+            self.pendingScreenshotDataURL = dataURL
+            completion()
+        }
+    }
+
+    /// Captures the screen, preferring `screenshotProvider` when the host app has supplied
+    /// one. Asynchronous because a host capturing Metal content has to go through APIs that
+    /// report back on a completion handler.
+    ///
+    /// Callers are responsible for hiding the widget beforehand. Doing it here would mean
+    /// restoring visibility from an asynchronous callback, which races with `openForm`
+    /// revealing the widget once the JS reports its size.
+    private func captureScreenshotDataURL(completion: @escaping (String?) -> Void) {
+        let encode: (UIImage?) -> Void = { image in
             guard let data = image?.jpegData(compressionQuality: 0.8) else {
                 completion(nil)
                 return
@@ -1616,12 +1642,12 @@ extension UserbackSDK: WKScriptMessageHandler {
         }
 
         guard let screenshotProvider else {
-            finish(captureActiveWindowScreenshot())
+            encode(captureActiveWindowScreenshot())
             return
         }
 
         screenshotProvider { [weak self] image in
-            finish(image ?? self?.captureActiveWindowScreenshot())
+            encode(image ?? self?.captureActiveWindowScreenshot())
         }
     }
 
@@ -1633,7 +1659,10 @@ extension UserbackSDK: WKScriptMessageHandler {
 
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: rendererFormat)
         return renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            // `afterScreenUpdates: true` waits for in-flight layout, which on the first
+            // open includes the widget's own opening animation and tears that animation
+            // down. The pixels we want are already on screen.
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
         }
     }
 
