@@ -5,7 +5,7 @@ Integrating Userback widget into your iOS application.
 
 - **Surveys** — `openSurvey(surveyKey:)` opens a specific survey directly.
 - **Screen tracking** — `enterScreen`/`leaveScreen` attribute surveys to the screen the user was on.
-- **Multi-project support** — `openForm` accepts an optional `projectKey` to route feedback to a specific Userback project when your app is set up with more than one.
+- **Multi-project support** — `openForm` accepts an optional `projectKey` argument to route feedback to a specific Userback project when your app is set up with more than one. Pass your **site key** (Site Settings → General) — a project's own key still works too, for existing integrations.
 
 All of the above are additive. Existing v1 `openForm(mode:, directTo:)` calls keep working unchanged — no code changes required to upgrade.
 
@@ -95,8 +95,10 @@ UserbackSDK.shared.openForm(mode: "bug")
 UserbackSDK.shared.openForm(mode: "general", directTo: "screenshot")
 
 // Route to a specific project, if your app has more than one set up
-UserbackSDK.shared.openForm(mode: "general", projectKey: "YOUR_PROJECT_KEY")
+UserbackSDK.shared.openForm(mode: "general", projectKey: "YOUR_SITE_KEY")
 ```
+
+Find your site key under **Site Settings → General** — open it from the gear icon next to the site in the site switcher. A project's own key still works here too, for existing integrations.
 
 ### 3. Open a survey
 
